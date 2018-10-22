@@ -34,17 +34,25 @@ def lookupA(name):
   return lookupName(name, dns.rdatatype.A)
 
 def lookupName(name, record):
-  return lookupNameRecursive(name, record, 8)
+  return lookupNameRecursive(name, record, 8, False)
 
 
 
 listOfAllRootServersAndIPs = [("a.root-servers.net.", "198.41.0.4"), ("b.root-servers.net.", "199.9.14.201"), ("c.root-servers.net.", "192.33.4.12"), ("d.root-servers.net.", "199.7.91.13"), ("e.root-servers.net.", "192.203.230.10"), ("f.root-servers.net.", "192.5.5.241"), ("g.root-servers.net.", "192.112.36.4"), ("h.root-servers.net.", "198.97.190.53"), ("i.root-servers.net.", "192.36.148.17"), ("j.root-servers.net.", "192.58.128.30"), ("k.root-servers.net.", "193.0.14.129"), ("l.root-servers.net.", "199.7.83.42"), ("m.root-servers.net.", "202.12.27.33")]
 
-def lookupNameRecursive(name, record, cnameChainsToFollow):
-  return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, 500)
+def lookupNameRecursive(name, record, cnameChainsToFollow, resolveAllGlueless):
+  return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless)
 
-def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, fullRecursionLimit):
+def lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, cache, resolveAllGlueless):
+  return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, 30)
+
+def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, fullRecursionLimit):
+
   print("name: " + name)
+  if (name, record) in cache:
+    print("name in cache")
+    return cache[(name, record)]
+
   if fullRecursionLimit < 0:
     raise ValueError("Recursed too much when performing query.")
   backupResolver = dns.resolver.Resolver()
@@ -65,18 +73,26 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   
 
   nameServerList = []
-  completeNameServerList = [listOfAllRootServersAndIPs]
+  completeNameServerList = []
   zoneList = ["."]
   dnsSecCount = 1 # We assume root servers are DNSSEC enabled
   dnsSecTrustChain = True
-  (nameserverName, nameserver) = random.choice(listOfAllRootServersAndIPs)
+  nameserverName = ""
+  nameserver = ""
+  listOfAllNameServersAndLookupsOrIPs = listOfAllRootServersAndIPs[:]
   dnsSecValid = True
   while True:
-    #print("zoneList: ")
-    #print(zoneList)
-    #print("ns set as " + str(nameserver))
-    #print("ns type as " + str(type(nameserver)))
-    #print("ns name set as " + str(nameserverName))
+    nsIndex = random.choice(xrange(len(listOfAllNameServersAndLookupsOrIPs)))
+    (nameserverName, ipOrLookup) = listOfAllNameServersAndLookupsOrIPs[nsIndex]
+    if isinstance(ipOrLookup, basestring):
+      nameserver = ipOrLookup
+    elif ipOrLookup == None:
+      nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1)
+      listOfAllNameServersAndLookupsOrIPs[nsIndex] = (nameserverName, nsLookup)
+      nameserver = getAddressForHostnameFromResultChain(nsLookup)
+    else:
+      nameserver = getAddressForHostnameFromResultChain(ipOrLookup)
+    completeNameServerList.append(listOfAllNameServersAndLookupsOrIPs[:])
     message = dns.message.make_query(name, record, want_dnssec=True)
     response = dns.query.udp(message, nameserver, timeout=4)
     nameServerList.append((nameserverName, nameserver))
@@ -101,11 +117,14 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
           raise ValueError("CNAME chain too long.")
         else:
           res = [(nameServerList, completeNameServerList, dnsSecCount, response.answer[0] == backupResolverAnswer[0], "CNAME {}".format(answerRR.target))]
-          res.extend(lookupNameRecursive(answerRR.target.to_text(), record, cnameChainsToFollow - 1))
+          res.extend(lookupNameRecursiveWithCache(answerRR.target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless))
+          cache[(name, record)] = res
           return res
       # Running answer.address breaks the lookup of MX records. Support will be added if needed.
       # To fix MX record support, returning full answer RR set.
-      return [(nameServerList, completeNameServerList, zoneList, dnsSecCount, response.answer[0] == backupResolverAnswer[0], answerRRSet)]
+      res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, response.answer[0] == backupResolverAnswer[0], answerRRSet)]
+      cache[(name, record)] = res
+      return res
     else:
 
       resultingNameServersRRsets = [a for a in response.authority if a.rdtype == dns.rdatatype.NS]
@@ -135,18 +154,15 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       #  raise ValueError("No NS records could be resolved from the additional records. Possibly glueless DNS.", response.authority[0], response.additional)
       #print("Glueless servers")
       #print(listOfGluelessNameServers)
+      print(listOfGluelessNameServers)
       listOfGluelessNameServersAndLookups = []
-      for gluelessNameServer in listOfGluelessNameServers:
-        listOfGluelessNameServersAndLookups.append((gluelessNameServer, lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, fullRecursionLimit - 1)))
+      if resolveAllGlueless:
+        for gluelessNameServer in listOfGluelessNameServers:
+          listOfGluelessNameServersAndLookups.append((gluelessNameServer, lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1)))
+      else:
+        listOfGluelessNameServersAndLookups = [(gluelessNameServer, None) for gluelessNameServer in listOfGluelessNameServers]        
       listOfAllNameServersAndLookupsOrIPs = listOfGluedNameServersAndIPs[:]
       listOfAllNameServersAndLookupsOrIPs.extend(listOfGluelessNameServersAndLookups)
-      completeNameServerList.append(listOfAllNameServersAndLookupsOrIPs)
-      (nameserverName, ipOrLookup) = random.choice(listOfAllNameServersAndLookupsOrIPs)
-      if isinstance(ipOrLookup, basestring):
-        nameserver = ipOrLookup
-      else:
-        nameserver = getAddressForHostnameFromResultChain(ipOrLookup)
-      
 
 def getFullDNSTargetIPList(lookupResult):
   ipList = []
@@ -201,7 +217,7 @@ def getPartialTargetIPList(name, record, includeARecords):
 
 # For now, All Let's Encrypt validation methods involve contacting and resolving an A record.
 # For no good reason, ietf.org is a glueless DNS lookup. It is not supported.
-print(lookupA("www.ietf.org"))
+print(lookupA("www.amazon.com"))
 #print(getFullTargetIPList("live.com", dns.rdatatype.A, False))
 #print(getAllAddressesForHostname("yahoo.com"))
 
