@@ -48,9 +48,7 @@ def lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, cache, resol
 
 def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, fullRecursionLimit):
 
-  print("name: " + name)
   if (name, record) in cache:
-    print("name in cache")
     return cache[(name, record)]
 
   if fullRecursionLimit < 0:
@@ -154,7 +152,6 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       #  raise ValueError("No NS records could be resolved from the additional records. Possibly glueless DNS.", response.authority[0], response.additional)
       #print("Glueless servers")
       #print(listOfGluelessNameServers)
-      print(listOfGluelessNameServers)
       listOfGluelessNameServersAndLookups = []
       if resolveAllGlueless:
         for gluelessNameServer in listOfGluelessNameServers:
@@ -217,7 +214,6 @@ def getPartialTargetIPList(name, record, includeARecords):
 
 # For now, All Let's Encrypt validation methods involve contacting and resolving an A record.
 # For no good reason, ietf.org is a glueless DNS lookup. It is not supported.
-print(lookupA("www.amazon.com"))
 #print(getFullTargetIPList("live.com", dns.rdatatype.A, False))
 #print(getAllAddressesForHostname("yahoo.com"))
 
