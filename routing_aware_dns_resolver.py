@@ -34,7 +34,7 @@ def lookupA(name):
   return lookupName(name, dns.rdatatype.A)
 
 def lookupName(name, record):
-  return lookupNameRecursive(name, record, 8, True)
+  return lookupNameRecursive(name, record, 8, False)
 
 
 
@@ -114,7 +114,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
         if cnameChainsToFollow == 0:
           raise ValueError("CNAME chain too long.")
         else:
-          res = [(nameServerList, completeNameServerList, dnsSecCount, response.answer[0] == backupResolverAnswer[0], "CNAME {}".format(answerRR.target))]
+          res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, response.answer[0] == backupResolverAnswer[0], "CNAME {}".format(answerRR.target))]
           res.extend(lookupNameRecursiveWithCache(answerRR.target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless))
           cache[(name, record)] = res
           return res
@@ -172,9 +172,8 @@ def getFullDNSTargetIPList(lookupResult):
             if isinstance(nsIPOrLookup, basestring):
               ipList.append(nsIPOrLookup)
             elif nsIPOrLookup != None:
-              print("recursive case")
               ipList.extend(getFullDNSTargetIPList(nsIPOrLookup))
-  return ipList
+  return list(set(ipList))
 
 # This is the full list of IPs that could be hijacked.
 # Use this to calculate attack viability probability.
@@ -185,7 +184,7 @@ def getFullTargetIPList(name, record, includeARecords):
     lookupResult = lookupName(name, record)
     res = getFullDNSTargetIPList(lookupResult)
     res.extend(getAllAddressesForHostnameFromResultChain(lookupResult))
-    return res
+    return list(set(res))
   else:
     return getFullDNSTargetIPList(lookupName(name, record))
 
@@ -225,6 +224,6 @@ def getPartialTargetIPList(name, record, includeARecords):
 #print([str(mx) for mx in lookupName("yahoo.com", dns.rdatatype.MX)[0][5]])
 
 #print([str(caa) for caa in lookupName("google.com", dns.rdatatype.CAA)[0][5]])  
-
-print(getFullTargetIPList("www.ietf.org", dns.rdatatype.A, False))
-print(getPartialTargetIPList("www.ietf.org", dns.rdatatype.A, False))
+#print(lookupA("ietf.org"))
+#print(getFullTargetIPList("www.amazon.com", dns.rdatatype.A, False))
+#print(getPartialTargetIPList("www.amazon.com", dns.rdatatype.A, False))
