@@ -114,7 +114,8 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
         if cnameChainsToFollow == 0:
           raise ValueError("CNAME chain too long.")
         else:
-          res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, response.answer[0] == backupResolverAnswer[0], "CNAME {}".format(answerRR.target))]
+          # This might be changed to not read as a string with the word and instead just give the full answer RR set.
+          res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, response.answer[0] == backupResolverAnswer[0], answerRRSet)]
           res.extend(lookupNameRecursiveWithCache(answerRR.target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless))
           cache[(name, record)] = res
           return res
@@ -225,5 +226,5 @@ def getPartialTargetIPList(name, record, includeARecords):
 
 #print([str(caa) for caa in lookupName("google.com", dns.rdatatype.CAA)[0][5]])  
 #print(lookupA("ietf.org"))
-#print(getFullTargetIPList("www.amazon.com", dns.rdatatype.A, False))
+#print(getFullTargetIPList("www.ietf.org", dns.rdatatype.A, False))
 #print(getPartialTargetIPList("www.amazon.com", dns.rdatatype.A, False))
