@@ -34,7 +34,7 @@ def lookupA(name):
   return lookupName(name, dns.rdatatype.A)
 
 def lookupName(name, record):
-  return lookupNameRecursive(name, record, 8, False)
+  return lookupNameRecursive(name, record, 8, True)
 
 
 
@@ -168,8 +168,12 @@ def getFullDNSTargetIPList(lookupResult):
     completeNameServerLists = cnameLookup[1]
     for zoneIndex in xrange(dnsSecCount, len(completeNameServerLists)):
         completeNameServerList = completeNameServerLists[zoneIndex]
-        for nsName, nsIP in completeNameServerList:
-            ipList.append(nsIP)
+        for nsName, nsIPOrLookup in completeNameServerList:
+            if isinstance(nsIPOrLookup, basestring):
+              ipList.append(nsIPOrLookup)
+            elif nsIPOrLookup != None:
+              print("recursive case")
+              ipList.extend(getFullDNSTargetIPList(nsIPOrLookup))
   return ipList
 
 # This is the full list of IPs that could be hijacked.
@@ -222,3 +226,5 @@ def getPartialTargetIPList(name, record, includeARecords):
 
 #print([str(caa) for caa in lookupName("google.com", dns.rdatatype.CAA)[0][5]])  
 
+print(getFullTargetIPList("www.ietf.org", dns.rdatatype.A, False))
+print(getPartialTargetIPList("www.ietf.org", dns.rdatatype.A, False))
