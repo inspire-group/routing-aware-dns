@@ -16,6 +16,8 @@ conn = mariadb.connect('localhost', 'routeages', 'routeages', 'routeagescalc',  
 cursor = conn.cursor()
 result = None
 
+outOfCerts = False
+
 
 scriptPath = os.path.dirname(os.path.realpath(__file__))
 lastCertificateIndexProcessedFileLocation = scriptPath + "/last-certificate-index-processed.var"
@@ -40,19 +42,22 @@ def writeLastCertificateIndexProcessedToDB(lastCertificateIndexProcessedFile):
 
 # This function was improved to include limiting to prevent from loading the entire db into ram at once.
 def getNewCerts():
-	global result, cursor, index, lastCertificateIndexProcessed
+	global result, cursor, index, lastCertificateIndexProcessed, outOfCerts
 	cursor.execute("""SELECT sqlId, webCertId, commonName, certTimestamp, processingTimestamp, 
 		resolvedIP FROM certificates LIMIT 100000 OFFSET {0}""".format(lastCertificateIndexProcessed))
 	if (cursor.rowcount == 0):
 		# This is an exit condition. We are out of certificates and thus are done with processing.
+		
 		print "SQL for certificates returned no rows (no more certs remain). Exiting."
 		sys.stdout.flush()
-		exit()
+		outOfCerts = True
 
 def getNextCertificate(lastCertificateIndexProcessedFile):
-	global cursor, result, lastCertificateIndexProcessed
+	global cursor, result, lastCertificateIndexProcessed, outOfCerts
 	while result == None:
 		getNewCerts()
+		if outOfCerts:
+			return None
 		result = cursor.fetchone()
 
 	retValue = {"timestamp": result[3], "commonName": result[2], "processingTimestamp": result[4], "sqlId": result[0], 
