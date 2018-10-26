@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Var files
+*.var
+
 # C extensions
 *.so
 
@@ -26,7 +29,7 @@ wheels/
 MANIFEST
 
 # Compiled Python
-.pyc
+*.pyc
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
