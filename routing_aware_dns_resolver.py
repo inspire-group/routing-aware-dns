@@ -8,7 +8,56 @@ import dns.message
 import dns.resolver
 import dns.rdatatype
 import dns.message
+import dns.exception
 import random
+
+# Errors to handle.
+# List index out of range:
+#  Exception in thread Thread-2:
+#  Traceback (most recent call last):
+#    File "/usr/local/Cellar/python@2/2.7.14_3/Frameworks/Python.framework/Versions/2.7/lib/python2.7/threading.py", line 801, in __bootstrap_inner
+#      self.run()
+#    File "/usr/local/Cellar/python@2/2.7.14_3/Frameworks/Python.framework/Versions/2.7/lib/python2.7/threading.py", line 754, in run
+#      self.__target(*self.__args, **self.__kwargs)
+#    File "resolve_dns.py", line 49, in workerFunction
+#      processCertificate(elem)
+#    File "resolve_dns.py", line 44, in processCertificate
+#      print(rad.lookupA(certificate["commonName"]))
+#    File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 34, in lookupA
+#      return lookupName(name, dns.rdatatype.A)
+#    File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 37, in lookupName
+#      return lookupNameRecursive(name, record, 8, False)
+#    File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 44, in lookupNameRecursive
+#      return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless)
+#    File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 47, in lookupNameRecursiveWithCache
+#      return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, 30)
+#    File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 132, in lookupNameRecursiveWithFullRecursionLimit
+#      nsGroup = resultingNameServersRRsets[0]
+#  IndexError: list index out of range
+
+# Traceback (most recent call last):
+#  File "/usr/local/Cellar/python@2/2.7.14_3/Frameworks/Python.framework/Versions/2.7/lib/python2.7/threading.py", line 801, in __bootstrap_inner
+#    self.run()
+#  File "/usr/local/Cellar/python@2/2.7.14_3/Frameworks/Python.framework/Versions/2.7/lib/python2.7/threading.py", line 754, in run
+#    self.__target(*self.__args, **self.__kwargs)
+#  File "resolve_dns.py", line 54, in workerFunction
+#    processCertificate(elem)
+#  File "resolve_dns.py", line 47, in processCertificate
+#    print("cn common name: {}, lookup result {}.".format(certificate["commonName"], rad.lookupA(certificate["commonName"])))
+#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 60, in lookupA
+#    return lookupName(name, dns.rdatatype.A)
+#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 63, in lookupName
+#    return lookupNameRecursive(name, record, 8, False)
+#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 70, in lookupNameRecursive
+#    return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless)
+#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 73, in lookupNameRecursiveWithCache
+#    return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, 30)
+#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 116, in lookupNameRecursiveWithFullRecursionLimit
+#    nameserver = getAddressForHostnameFromResultChain(nsLookup)
+#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 46, in getAddressForHostnameFromResultChain
+#    return answerRR.address
+#AttributeError: 'RRSIG' object has no attribute 'address'
+
 
 def getAddressForHostname(name):
   return getAddressForHostnameFromResultChain(lookupA(name))
@@ -17,7 +66,12 @@ def getAddressForHostname(name):
 def getAddressForHostnameFromResultChain(resultChain):
   answerRRSet = resultChain[len(resultChain) - 1][5]
   answerRR = random.choice(answerRRSet)
-  return answerRR.address
+  address = ""
+  try:
+    address = answerRR.address
+  except AttributeError:
+    raise ValueError("The given result chain does not have a valid address. May be a lookup for the wrong record type.", resultChain)
+  return address
 
 def getAllAddressesForHostname(name):
   return getAllAddressesForHostnameFromResultChain(lookupA(name))
@@ -26,8 +80,11 @@ def getAllAddressesForHostname(name):
 def getAllAddressesForHostnameFromResultChain(resultChain):
   answerRRSet = resultChain[len(resultChain) - 1][5]
   res = []
-  for answerRR in answerRRSet:
-    res.append(answerRR.address)
+  try:
+    for answerRR in answerRRSet:
+      res.append(answerRR.address)
+  except AttributeError:
+    raise ValueError("The given result chain does not have a valid address. May be a lookup for the wrong record type.", resultChain)
   return res
 
 def lookupA(name):
@@ -52,22 +109,24 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
     return cache[(name, record)]
 
   if fullRecursionLimit < 0:
-    raise ValueError("Recursed too much when performing query.")
+    raise ValueError("Recursed too much when performing query for domain {}.".format(name))
   backupResolver = dns.resolver.Resolver()
   # Use local bind as backup resolver for DNSSEC validation.
-  #backupResolver.nameservers = ["127.0.0.1"]
+  backupResolver.nameservers = ["127.0.0.1"]
   # USe Google DNS as backup resolver.
 
-  backupResolver.nameservers = ["8.8.8.8"]
+  #backupResolver.nameservers = ["8.8.8.8"]
   backupResolverAnswer = None
   try:
     backupResolverResponse = backupResolver.query(name, record).response
     backupResolverAnswer = backupResolverResponse.answer
   except dns.resolver.NoNameservers as nsError:
     if "answered SERVFAIL" in nsError.msg:
-      raise ValueError("Invalid DNSSEC for domain.") 
+      raise ValueError("SERVFAIL for domain {}. Likely invalid DNSSEC.".format(name))
     else:
       raise
+  except dns.resolver.NXDOMAIN as nsError:
+    raise ValueError("NXDOMAIN for domain {}.".format(name))
   
 
   nameServerList = []
@@ -80,19 +139,34 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   listOfAllNameServersAndLookupsOrIPs = listOfAllRootServersAndIPs[:]
   dnsSecValid = True
   while True:
-    nsIndex = random.choice(xrange(len(listOfAllNameServersAndLookupsOrIPs)))
-    (nameserverName, ipOrLookup) = listOfAllNameServersAndLookupsOrIPs[nsIndex]
-    if isinstance(ipOrLookup, basestring):
-      nameserver = ipOrLookup
-    elif ipOrLookup == None:
-      nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1)
-      listOfAllNameServersAndLookupsOrIPs[nsIndex] = (nameserverName, nsLookup)
-      nameserver = getAddressForHostnameFromResultChain(nsLookup)
-    else:
-      nameserver = getAddressForHostnameFromResultChain(ipOrLookup)
+    listOfFailedNameserverIndexes = []
+    response = ""
+    while True:
+      validIndexes = list(set(xrange(len(listOfAllNameServersAndLookupsOrIPs))) - set([index for (index, _) in listOfFailedNameserverIndexes]))
+      if len(validIndexes) == 0:
+        raise ValueError("No Nameservers for domain {}".format(name))
+      nsIndex = random.choice(validIndexes)
+      (nameserverName, ipOrLookup) = listOfAllNameServersAndLookupsOrIPs[nsIndex]
+      if isinstance(ipOrLookup, basestring):
+        nameserver = ipOrLookup
+      elif ipOrLookup == None:
+        nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1)
+        listOfAllNameServersAndLookupsOrIPs[nsIndex] = (nameserverName, nsLookup)
+        nameserver = getAddressForHostnameFromResultChain(nsLookup)
+      else:
+        nameserver = getAddressForHostnameFromResultChain(ipOrLookup)
+      #print("chosen ns: {}".format(nameserverName))
+      message = dns.message.make_query(name, record, want_dnssec=True)
+      try:
+        response = dns.query.udp(message, nameserver, timeout=4)
+      except dns.exception.Timeout:
+        listOfFailedNameserverIndexes.append((nsIndex, "Timeout"))
+        continue
+      if len(response.answer) == 0 and len(response.authority) == 0:
+        listOfFailedNameserverIndexes.append((nsIndex, "No answer or authority"))
+        continue
+      break
     completeNameServerList.append(listOfAllNameServersAndLookupsOrIPs[:])
-    message = dns.message.make_query(name, record, want_dnssec=True)
-    response = dns.query.udp(message, nameserver, timeout=4)
     nameServerList.append((nameserverName, nameserver))
     if dnsSecTrustChain:
       nextLevelDNSSEC = False
@@ -125,10 +199,14 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       cache[(name, record)] = res
       return res
     else:
-
       resultingNameServersRRsets = [a for a in response.authority if a.rdtype == dns.rdatatype.NS]
       listOfAllNameServers = []
-
+      if len(resultingNameServersRRsets) == 0:
+        print(response.to_text())
+        print([a.to_text() for a in response.answer])
+        print([a.to_text() for a in response.authority])
+        print([a.to_text() for a in response.additional])
+        raise ValueError("No NS records for domain {}.".format(name))
       nsGroup = resultingNameServersRRsets[0]
 
       zoneList.append(nsGroup.name)
@@ -221,7 +299,7 @@ def getPartialTargetIPList(name, record, includeARecords):
 #print(getFullTargetIPList("live.com", dns.rdatatype.A, False))
 #print(getAllAddressesForHostname("yahoo.com"))
 
-
+#print(getAddressForHostnameFromResultChain(lookupA("www.amazon.com")))
 #print([str(mx) for mx in lookupName("yahoo.com", dns.rdatatype.MX)[0][5]])
 
 #print([str(caa) for caa in lookupName("google.com", dns.rdatatype.CAA)[0][5]])  

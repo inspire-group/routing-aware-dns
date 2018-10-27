@@ -9,6 +9,7 @@ import urllib2
 
 import os,sys
 
+
 # Code to use external read certificate history.
 #import imspect
 #currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
@@ -21,12 +22,11 @@ from read_certificate_history_unordered import getNextCertificate
 
 
 
-threadCount = 200
+threadCount = 4
+#threadCount = 200
 
 
 
-
-print(rad.lookupA("example.com"))
 
 
 scriptPath = os.path.dirname(os.path.realpath(__file__))
@@ -42,8 +42,10 @@ lastCertificateIndexProcessedFile = open(lastCertificateIndexProcessedFileLocati
 
 # called by each thread
 def processCertificate(certificate):
-  print(certificate)
-  time.sleep(1)
+  try:
+    print("cn common name: {}, lookup result {}.".format(certificate["commonName"], rad.lookupA(certificate["commonName"])))
+  except dns.resolver.NXDOMAIN:
+    print("NXDOMAIN for cn" + certificate["commonName"])
 
 def workerFunction(q):
   elem = q.get()
@@ -66,7 +68,7 @@ for q in queues:
 
 cert = getNextCertificate(lastCertificateIndexProcessedFile)
 while cert != None:
-  shortestQueueLength = 50
+  shortestQueueLength = 10
   shortestQueue = None
   for q in queues:
     print(q.qsize())
@@ -81,17 +83,19 @@ while cert != None:
     shortestQueue.put(cert)
     cert = getNextCertificate(lastCertificateIndexProcessedFile)
   else:
-    time.sleep(5)
+    try:
+      time.sleep(3)
+    except KeyboardInterrupt:
+      print("Keyboard Interrupt. Processing queued certificates and exiting program.")
+      # exit all threads.
+      for q in queues:
+        q.put(None)
+      exit()
 
-
+print("Final Certificate Queued. Processing queued certificates and exiting program.")
 #queues[0].put()
 #queues[0].put(getNextCertificate(lastCertificateIndexProcessedFile))
 #queues[0].put(getNextCertificate(lastCertificateIndexProcessedFile))
 #queues[0].put(getNextCertificate(lastCertificateIndexProcessedFile))
 for q in queues:
   q.put(None)
-exit()
-
-while True:
-  certificate = getNextCertificate(lastCertificateIndexProcessedFile)
-  print(certificate["commonName"])
