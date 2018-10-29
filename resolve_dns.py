@@ -43,9 +43,16 @@ lastCertificateIndexProcessedFile = open(lastCertificateIndexProcessedFileLocati
 # called by each thread
 def processCertificate(certificate):
   try:
-    print("cn common name: {}, lookup result {}.".format(certificate["commonName"], rad.lookupA(certificate["commonName"])))
-  except dns.resolver.NXDOMAIN:
-    print("NXDOMAIN for cn" + certificate["commonName"])
+    rad.lookupA(certificate["commonName"])
+    #print("cn common name: {}, lookup result {}.".format(certificate["commonName"], rad.lookupA(certificate["commonName"])))
+  except ValueError as e:
+    errMsg = str(e)
+    if errMsg.startswith("NXDOMAIN"):
+      print("NXDOMAIN for cn " + certificate["commonName"])
+    elif errMsg.startswith("SERVFAIL"):
+      print("SERVFAIL for cn " + certificate["commonName"])
+    else:
+      raise
 
 def workerFunction(q):
   elem = q.get()
@@ -71,7 +78,7 @@ while cert != None:
   shortestQueueLength = 10
   shortestQueue = None
   for q in queues:
-    print(q.qsize())
+    #print(q.qsize())
     if q.empty():
       shortestQueue = q
       shortestQueueLength = 0

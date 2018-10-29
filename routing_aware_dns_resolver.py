@@ -181,6 +181,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
     #print(dir(response))
     #print(dir(response.answer))
     if response.answer != []:
+      # Some name servers will put DNSSEC info before the answer. It is important to actually check the rdtypes.
       answerRRSet = response.answer[0]
 
       answerRR = random.choice(answerRRSet)
