@@ -118,6 +118,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   #backupResolver.nameservers = ["8.8.8.8"]
   backupResolverAnswer = None
   try:
+    # Must add catch statement for dns.resolver.NoAnswer
     backupResolverResponse = backupResolver.query(name, record).response
     backupResolverAnswer = backupResolverResponse.answer
   except dns.resolver.NoNameservers as nsError:
