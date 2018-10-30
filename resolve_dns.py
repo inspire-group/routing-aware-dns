@@ -23,7 +23,6 @@ import traceback
 from read_certificate_history_unordered import getNextCertificate
 
 
-
 threadCount = 30
 
 

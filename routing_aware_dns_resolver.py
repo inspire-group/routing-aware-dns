@@ -11,53 +11,6 @@ import dns.message
 import dns.exception
 import random
 
-# Errors to handle.
-# List index out of range:
-#  Exception in thread Thread-2:
-#  Traceback (most recent call last):
-#    File "/usr/local/Cellar/python@2/2.7.14_3/Frameworks/Python.framework/Versions/2.7/lib/python2.7/threading.py", line 801, in __bootstrap_inner
-#      self.run()
-#    File "/usr/local/Cellar/python@2/2.7.14_3/Frameworks/Python.framework/Versions/2.7/lib/python2.7/threading.py", line 754, in run
-#      self.__target(*self.__args, **self.__kwargs)
-#    File "resolve_dns.py", line 49, in workerFunction
-#      processCertificate(elem)
-#    File "resolve_dns.py", line 44, in processCertificate
-#      print(rad.lookupA(certificate["commonName"]))
-#    File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 34, in lookupA
-#      return lookupName(name, dns.rdatatype.A)
-#    File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 37, in lookupName
-#      return lookupNameRecursive(name, record, 8, False)
-#    File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 44, in lookupNameRecursive
-#      return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless)
-#    File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 47, in lookupNameRecursiveWithCache
-#      return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, 30)
-#    File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 132, in lookupNameRecursiveWithFullRecursionLimit
-#      nsGroup = resultingNameServersRRsets[0]
-#  IndexError: list index out of range
-
-# Traceback (most recent call last):
-#  File "/usr/local/Cellar/python@2/2.7.14_3/Frameworks/Python.framework/Versions/2.7/lib/python2.7/threading.py", line 801, in __bootstrap_inner
-#    self.run()
-#  File "/usr/local/Cellar/python@2/2.7.14_3/Frameworks/Python.framework/Versions/2.7/lib/python2.7/threading.py", line 754, in run
-#    self.__target(*self.__args, **self.__kwargs)
-#  File "resolve_dns.py", line 54, in workerFunction
-#    processCertificate(elem)
-#  File "resolve_dns.py", line 47, in processCertificate
-#    print("cn common name: {}, lookup result {}.".format(certificate["commonName"], rad.lookupA(certificate["commonName"])))
-#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 60, in lookupA
-#    return lookupName(name, dns.rdatatype.A)
-#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 63, in lookupName
-#    return lookupNameRecursive(name, record, 8, False)
-#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 70, in lookupNameRecursive
-#    return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless)
-#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 73, in lookupNameRecursiveWithCache
-#    return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, 30)
-#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 116, in lookupNameRecursiveWithFullRecursionLimit
-#    nameserver = getAddressForHostnameFromResultChain(nsLookup)
-#  File "/Users/henry/Google Drive/Documents/GitHub/routing-aware-dns/routing_aware_dns_resolver.py", line 46, in getAddressForHostnameFromResultChain
-#    return answerRR.address
-#AttributeError: 'RRSIG' object has no attribute 'address'
-
 
 def getAddressForHostname(name):
   return getAddressForHostnameFromResultChain(lookupA(name))
@@ -114,6 +67,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   # Use local bind as backup resolver for DNSSEC validation.
   backupResolver.nameservers = ["127.0.0.1"]
   backupResolver.timeout = 5
+  backupResolver.lifetime = 5
   # USe Google DNS as backup resolver.
 
   #backupResolver.nameservers = ["8.8.8.8"]
