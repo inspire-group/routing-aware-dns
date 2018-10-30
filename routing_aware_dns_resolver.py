@@ -118,7 +118,6 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   #backupResolver.nameservers = ["8.8.8.8"]
   backupResolverAnswer = None
   try:
-    # Must add catch statement for dns.resolver.NoAnswer
     backupResolverResponse = backupResolver.query(name, record).response
     backupResolverAnswer = backupResolverResponse.answer
   except dns.resolver.NoNameservers as nsError:
@@ -128,6 +127,8 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       raise
   except dns.resolver.NXDOMAIN as nsError:
     raise ValueError("NXDOMAIN for domain {}.".format(name))
+  except dns.resolver.NoAnswer as nsError:
+    raise ValueError("NoAnswer for domain {}.".format(name))
   
 
   nameServerList = []
@@ -145,7 +146,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
     while True:
       validIndexes = list(set(xrange(len(listOfAllNameServersAndLookupsOrIPs))) - set([index for (index, _) in listOfFailedNameserverIndexes]))
       if len(validIndexes) == 0:
-        raise ValueError("No Nameservers for domain {}".format(name))
+        raise ValueError("NoNameservers for domain {}".format(name))
       nsIndex = random.choice(validIndexes)
       (nameserverName, ipOrLookup) = listOfAllNameServersAndLookupsOrIPs[nsIndex]
       if isinstance(ipOrLookup, basestring):
@@ -183,21 +184,25 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
     #print(dir(response.answer))
     if response.answer != []:
       # Some name servers will put DNSSEC info before the answer. It is important to actually check the rdtypes.
-      answerRRSet = response.answer[0]
+      answerRRSetList = [a for a in response.answer if a.rdtype == record]
+      cname = False
 
-      answerRR = random.choice(answerRRSet)
-      if answerRR.rdtype == dns.rdatatype.CNAME:
+      if len(answerRRSetList) == 0:
+        answerRRSetList = [a for a in response.answer if a.rdtype == dns.rdatatype.CNAME]
+        if len(answerRRSetList) == 0:
+          raise ValueError("NoAnswer and different response from backup resolver for domain {}".format(name))
+        cname = True
+      answerRRSet = answerRRSetList[0]
+
+      if cname:
         if cnameChainsToFollow == 0:
           raise ValueError("CNAME chain too long.")
         else:
-          # This might be changed to not read as a string with the word and instead just give the full answer RR set.
-          res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, response.answer[0] == backupResolverAnswer[0], answerRRSet)]
-          res.extend(lookupNameRecursiveWithCache(answerRR.target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless))
+          res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet)]
+          res.extend(lookupNameRecursiveWithCache(random.choice(answerRRSet).target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless))
           cache[(name, record)] = res
           return res
-      # Running answer.address breaks the lookup of MX records. Support will be added if needed.
-      # To fix MX record support, returning full answer RR set.
-      res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, response.answer[0] == backupResolverAnswer[0], answerRRSet)]
+      res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet)]
       cache[(name, record)] = res
       return res
     else:
@@ -305,6 +310,6 @@ def getPartialTargetIPList(name, record, includeARecords):
 #print([str(mx) for mx in lookupName("yahoo.com", dns.rdatatype.MX)[0][5]])
 
 #print([str(caa) for caa in lookupName("google.com", dns.rdatatype.CAA)[0][5]])  
-#print(lookupA("ietf.org"))
+#print(lookupA("rogieoj49.fortynine.axc.nl"))
 #print(getFullTargetIPList("www.ietf.org", dns.rdatatype.A, False))
 #print(getPartialTargetIPList("www.amazon.com", dns.rdatatype.A, False))

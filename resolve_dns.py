@@ -8,6 +8,8 @@ import threading
 import urllib2
 
 import os,sys
+import traceback
+
 
 
 # Code to use external read certificate history.
@@ -22,9 +24,7 @@ from read_certificate_history_unordered import getNextCertificate
 
 
 
-threadCount = 4
-#threadCount = 200
-
+threadCount = 100
 
 
 
@@ -42,8 +42,11 @@ lastCertificateIndexProcessedFile = open(lastCertificateIndexProcessedFileLocati
 
 # called by each thread
 def processCertificate(certificate):
+  global certsProcessed
+  certsProcessed += 1
   try:
     rad.lookupA(certificate["commonName"])
+    #print("cn {} processed".format(certificate["commonName"]))
     #print("cn common name: {}, lookup result {}.".format(certificate["commonName"], rad.lookupA(certificate["commonName"])))
   except ValueError as e:
     errMsg = str(e)
@@ -51,8 +54,16 @@ def processCertificate(certificate):
       print("NXDOMAIN for cn " + certificate["commonName"])
     elif errMsg.startswith("SERVFAIL"):
       print("SERVFAIL for cn " + certificate["commonName"])
+    elif errMsg.startswith("NoAnswer"):
+      print("NoAnswer for cn " + certificate["commonName"])
+    elif errMsg.startswith("NoNameservers"):
+      print("NoNameservers for cn " + certificate["commonName"])
     else:
-      raise
+      print("Unhandled value error for cn {}: {}".format(certificate["commonName"], errMsg))
+  except Exception as e:
+    print("Unhandled exception for cn: " + certificate["commonName"])
+    traceback.print_exc()
+      
 
 def workerFunction(q):
   elem = q.get()
@@ -72,9 +83,13 @@ for q in queues:
     #t.daemon = True
     t.start()
 
-
+certsProcessed = 1
+startTime = time.time()
 cert = getNextCertificate(lastCertificateIndexProcessedFile)
 while cert != None:
+  elapsed = time.time() - startTime
+  secondsPerACertificate = elapsed / certsProcessed
+  print("Sec per a cert: {}".format(secondsPerACertificate))
   shortestQueueLength = 10
   shortestQueue = None
   for q in queues:
