@@ -24,7 +24,7 @@ from read_certificate_history_unordered import getNextCertificate
 
 
 
-threadCount = 100
+threadCount = 30
 
 
 
