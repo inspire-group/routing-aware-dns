@@ -12,6 +12,9 @@ import dns.exception
 import random
 
 
+def checkMatchedBackupResolver(resultChain):
+  return resultChain[len(resultChain) - 1][4]
+
 def getAddressForHostname(name):
   return getAddressForHostnameFromResultChain(lookupA(name))
   
