@@ -88,7 +88,7 @@ def processCertificate(certificate, conn, cursor):
         cursor.execute("INSERT IGNORE INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
           .format(certificate["sqlId"], "Unhandled value error"))
         conn.commit()
-        break
+      break
     except Exception as e:
       error = e
       continue
