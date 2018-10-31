@@ -55,9 +55,12 @@ def processCertificate(certificate, conn, cursor):
       fullIPList = rad.getPartialDNSTargetIPList(lookup)
       allAddresses = rad.getAddressForHostnameFromResultChain(lookup)
       matchedBackupResolver = rad.checkMatchedBackupResolver(lookup)
-      cursor.execute("INSERT INTO dnsLookups (certSqlId, region, resolvedIPs, partialDNSIPs, fullDNSIPs, matchedBackupResolver) VALUES ({}, 'Los Angeles', '{}', '{}', '{}', {})"
-        .format(certificate["sqlId"], json.dumps(allAddresses), json.dumps(partialIPList), json.dumps(fullIPList), "true" if matchedBackupResolver else "false"))
-      conn.commit()
+      try:
+        cursor.execute("INSERT INTO dnsLookups (certSqlId, region, resolvedIPs, partialDNSIPs, fullDNSIPs, matchedBackupResolver) VALUES ({}, 'Los Angeles', '{}', '{}', '{}', {})"
+          .format(certificate["sqlId"], json.dumps(allAddresses), json.dumps(partialIPList), json.dumps(fullIPList), "true" if matchedBackupResolver else "false"))
+        conn.commit()
+      except Exception:
+        pass
       break
       #print("cn {} processed".format(certificate["commonName"]))
       #print("cn common name: {}, lookup result {}.".format(certificate["commonName"], rad.lookupA(certificate["commonName"])))
@@ -93,9 +96,12 @@ def processCertificate(certificate, conn, cursor):
       error = e
       continue
   if error:
-    cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
-      .format(certificate["sqlId"], "Unhandled exception"))
-    conn.commit()
+    try:
+      cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
+        .format(certificate["sqlId"], "Unhandled exception"))
+      conn.commit()
+    except Exception:
+      pass
     print("Unhandled exception for cn: " + certificate["commonName"])
   certsProcessed += 1    
 
