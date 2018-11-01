@@ -24,7 +24,7 @@ import json
 from read_certificate_history_unordered import getNextCertificate
 
 # 100 is a good production thread count, but for testing 5 threads is more stable.
-threadCount = 5
+threadCount = 50
 
 
 
@@ -55,37 +55,38 @@ def processCertificate(certificate, conn, cursor):
       fullIPList = rad.getPartialDNSTargetIPList(lookup)
       allAddresses = rad.getAddressForHostnameFromResultChain(lookup)
       matchedBackupResolver = rad.checkMatchedBackupResolver(lookup)
-      cursor.execute("INSERT IGNORE INTO dnsLookups (certSqlId, region, resolvedIPs, partialDNSIPs, fullDNSIPs, matchedBackupResolver) VALUES ({}, 'Los Angeles', '{}', '{}', '{}', {})"
+      cursor.execute("INSERT INTO dnsLookups (certSqlId, region, resolvedIPs, partialDNSIPs, fullDNSIPs, matchedBackupResolver) VALUES ({}, 'Los Angeles', '{}', '{}', '{}', {})"
         .format(certificate["sqlId"], json.dumps(allAddresses), json.dumps(partialIPList), json.dumps(fullIPList), "true" if matchedBackupResolver else "false"))
       conn.commit()
+      error = None
       break
       #print("cn {} processed".format(certificate["commonName"]))
       #print("cn common name: {}, lookup result {}.".format(certificate["commonName"], rad.lookupA(certificate["commonName"])))
     except ValueError as e:
       errMsg = str(e)
       if errMsg.startswith("NXDOMAIN"):
-        cursor.execute("INSERT IGNORE INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
+        cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
           .format(certificate["sqlId"], "NXDOMAIN"))
         conn.commit()
         print("NXDOMAIN for cn " + certificate["commonName"])
       elif errMsg.startswith("SERVFAIL"):
-        cursor.execute("INSERT IGNORE INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
+        cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
           .format(certificate["sqlId"], "SERVFAIL"))
         conn.commit()
         print("SERVFAIL for cn " + certificate["commonName"])
       elif errMsg.startswith("NoAnswer"):
-        cursor.execute("INSERT IGNORE INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
+        cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
           .format(certificate["sqlId"], "NoAnswer"))
         conn.commit()
         print("NoAnswer for cn " + certificate["commonName"])
       elif errMsg.startswith("NoNameservers"):
-        cursor.execute("INSERT IGNORE INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
+        cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
           .format(certificate["sqlId"], "NoNameservers"))
         conn.commit()
         print("NoNameservers for cn " + certificate["commonName"])
       else:
         print("Unhandled value error for cn {}: {}".format(certificate["commonName"], errMsg))
-        cursor.execute("INSERT IGNORE INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
+        cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
           .format(certificate["sqlId"], "Unhandled value error"))
         conn.commit()
       break
@@ -93,7 +94,7 @@ def processCertificate(certificate, conn, cursor):
       error = e
       continue
   if error:
-    cursor.execute("INSERT IGNORE INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
+    cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
       .format(certificate["sqlId"], "Unhandled exception"))
     conn.commit()
     print("Unhandled exception for cn: " + certificate["commonName"])

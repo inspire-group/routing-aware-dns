@@ -11,6 +11,8 @@ import dns.message
 import dns.exception
 import random
 
+import sys
+
 
 def checkMatchedBackupResolver(resultChain):
   return resultChain[len(resultChain) - 1][4]
@@ -118,7 +120,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       #print("chosen ns: {}".format(nameserverName))
       message = dns.message.make_query(name, record, want_dnssec=True)
       try:
-        response = dns.query.udp(message, nameserver, timeout=4)
+        response = dns.query.udp(message, nameserver, timeout=4, ignore_trailing=True)
       except dns.exception.Timeout:
         listOfFailedNameserverIndexes.append((nsIndex, "Timeout"))
         continue
@@ -258,6 +260,12 @@ def getPartialTargetIPList(name, record, includeARecords):
     return res
   else:
     return getPartialDNSTargetIPList(lookupName(name, record))
+
+
+if __name__ == "__main__":
+  domain = sys.argv[1]
+  print(getAllAddressesForHostname(domain))
+
 
 # For now, All Let's Encrypt validation methods involve contacting and resolving an A record.
 # For no good reason, ietf.org is a glueless DNS lookup. It is not supported.
