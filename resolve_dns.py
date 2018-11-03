@@ -63,6 +63,7 @@ def processCertificate(certificate, conn, cursor):
       #print("cn {} processed".format(certificate["commonName"]))
       #print("cn common name: {}, lookup result {}.".format(certificate["commonName"], rad.lookupA(certificate["commonName"])))
     except ValueError as e:
+
       errMsg = str(e)
       if errMsg.startswith("NXDOMAIN"):
         cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
@@ -89,6 +90,7 @@ def processCertificate(certificate, conn, cursor):
         cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
           .format(certificate["sqlId"], "Unhandled value error"))
         conn.commit()
+      error = None
       break
     except Exception as e:
       error = e
