@@ -120,7 +120,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       #print("chosen ns: {}".format(nameserverName))
       message = dns.message.make_query(name, record, want_dnssec=True)
       try:
-        response = dns.query.udp(message, nameserver, timeout=4, ignore_trailing=True)
+        response = dns.query.udp(message, nameserver, timeout=4, source=None, ignore_trailing=True)
       except dns.exception.Timeout:
         listOfFailedNameserverIndexes.append((nsIndex, "Timeout"))
         continue
