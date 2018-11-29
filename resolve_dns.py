@@ -38,7 +38,7 @@ lastCertificateIndexProcessedFileLocation = scriptPath + "/last-certificate-inde
 
 lastCertificateIndexProcessedFile = open(lastCertificateIndexProcessedFileLocation, 'wb')
 
-
+logFile = open(scriptPath + "/full-output.log", 'a')
 
 
 
