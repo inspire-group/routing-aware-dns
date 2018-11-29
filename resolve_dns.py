@@ -145,6 +145,9 @@ while cert != None:
   elapsed = time.time() - startTime
   secondsPerACertificate = elapsed / certsProcessed
   print("Sec per a cert: {}".format(secondsPerACertificate))
+  print("Certs processed: {}".format(certsProcessed))
+  writeLog("Sec per a cert: {}".format(secondsPerACertificate))
+  writeLog("Certs processed: {}".format(certsProcessed))
   shortestQueueLength = 10
   shortestQueue = None
   for q in queues:
