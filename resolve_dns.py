@@ -40,11 +40,21 @@ lastCertificateIndexProcessedFile = open(lastCertificateIndexProcessedFileLocati
 
 logFile = open(scriptPath + "/full-output.log", 'a')
 
+def getLogHeader():
+  return "[@{}] ".format(time.time())
+
+def writeLog(*lines):
+  for line in lines:
+    logFile.write(getLogHeader() + line + "\n")
+  logFile.flush()
+
+writeLog("Program Start.")
 
 
 # called by each thread
 def processCertificate(certificate, conn, cursor):
   global certsProcessed
+  writeLog("cn={}: Processing Certificate".format(certificate["commonName"]))
   retry = 0
   error = None
   while retry < 3:
@@ -55,9 +65,13 @@ def processCertificate(certificate, conn, cursor):
       fullIPList = rad.getPartialDNSTargetIPList(lookup)
       allAddresses = rad.getAddressForHostnameFromResultChain(lookup)
       matchedBackupResolver = rad.checkMatchedBackupResolver(lookup)
-      cursor.execute("INSERT INTO dnsLookups (certSqlId, region, resolvedIPs, partialDNSIPs, fullDNSIPs, matchedBackupResolver) VALUES ({}, 'Los Angeles', '{}', '{}', '{}', {})"
-        .format(certificate["sqlId"], json.dumps(allAddresses), json.dumps(partialIPList), json.dumps(fullIPList), "true" if matchedBackupResolver else "false"))
+      sql = "INSERT INTO dnsLookups (certSqlId, region, resolvedIPs, partialDNSIPs, fullDNSIPs, matchedBackupResolver) VALUES ({}, 'Los Angeles', '{}', '{}', '{}', {})".format(certificate["sqlId"], json.dumps(allAddresses), json.dumps(partialIPList), json.dumps(fullIPList), "true" if matchedBackupResolver else "false")
+      cursor.execute(sql)
       conn.commit()
+      writeLog("cn={}: lookup had no errors.".format(certificate["commonName"]), 
+        "cn={}: full lookup result: {}".format(certificate["commonName"], str(lookup)), 
+        "cn={}: result portion of lookup as text: {}".format(certificate["commonName"], str([answer[5].to_text() for answer in lookup])), 
+        "cn={}: sql committed to server: {}".format(certificate["commonName"], sql))
       error = None
       break
       #print("cn {} processed".format(certificate["commonName"]))
@@ -86,20 +100,22 @@ def processCertificate(certificate, conn, cursor):
         conn.commit()
         print("NoNameservers for cn " + certificate["commonName"])
       else:
-        print("Unhandled value error for cn {}: {}".format(certificate["commonName"], errMsg))
+        writeLog("cn={}: Unhandled value error: {}".format(certificate["commonName"], errMsg))
         cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
           .format(certificate["sqlId"], "Unhandled value error"))
         conn.commit()
+      writeLog("cn={}: ERROR, VALUE ERROR in lookup: {}".format(certificate["commonName"], errMsg))
       error = None
       break
     except Exception as e:
+      writeLog("cn={}: ERROR, UNHANDLED EXCEPTION in lookup causing retry (retry count of {}): {}".format(certificate["commonName"], retry, str(e)))
       error = e
       continue
   if error:
     cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
       .format(certificate["sqlId"], "Unhandled exception"))
     conn.commit()
-    print("Unhandled exception for cn: " + certificate["commonName"])
+    writeLog("cn={}: ERROR, UNHANDLED EXCEPTION in lookup written to server (max retries reached): {}".format(certificate["commonName"], str(error)))
   certsProcessed += 1    
 
 def workerFunction(q):
@@ -148,12 +164,14 @@ while cert != None:
       time.sleep(3)
     except KeyboardInterrupt:
       print("Keyboard Interrupt. Processing queued certificates and exiting program.")
+      writeLog("Program Stopping: Keyboard Interrupt")
       # exit all threads.
       for q in queues:
         q.put(None)
       exit()
 
 print("Final Certificate Queued. Processing queued certificates and exiting program.")
+writeLog("Program Stopping: Finished Certificates")
 #queues[0].put()
 #queues[0].put(getNextCertificate(lastCertificateIndexProcessedFile))
 #queues[0].put(getNextCertificate(lastCertificateIndexProcessedFile))
