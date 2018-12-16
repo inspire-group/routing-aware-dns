@@ -79,12 +79,7 @@ def processCertificate(certificate, conn, cursor):
     except ValueError as e:
 
       errMsg = str(e)
-      if errMsg.startswith("MasterTimeout"):
-        cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
-          .format(certificate["sqlId"], "MasterTimeout"))
-        conn.commit()
-        print("MasterTimeout for cn " + certificate["commonName"])
-      elif errMsg.startswith("NXDOMAIN"):
+      if errMsg.startswith("NXDOMAIN"):
         cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
           .format(certificate["sqlId"], "NXDOMAIN"))
         conn.commit()
@@ -104,6 +99,11 @@ def processCertificate(certificate, conn, cursor):
           .format(certificate["sqlId"], "NoNameservers"))
         conn.commit()
         print("NoNameservers for cn " + certificate["commonName"])
+      elif errMsg.startswith("MasterTimeout"):
+        cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
+          .format(certificate["sqlId"], "MasterTimeout"))
+        conn.commit()
+        print("MasterTimeout for cn " + certificate["commonName"])
       else:
         writeLog("cn={}: Unhandled value error: {}".format(certificate["commonName"], errMsg))
         cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
