@@ -24,7 +24,7 @@ import json
 from read_certificate_history_unordered import getNextCertificate
 
 # 100 is a good production thread count, but for testing 5 threads is more stable.
-threadCount = 50
+threadCount = 30
 
 
 
@@ -79,7 +79,12 @@ def processCertificate(certificate, conn, cursor):
     except ValueError as e:
 
       errMsg = str(e)
-      if errMsg.startswith("NXDOMAIN"):
+      if errMsg.startswith("MasterTimeout"):
+        cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
+          .format(certificate["sqlId"], "MasterTimeout"))
+        conn.commit()
+        print("MasterTimeout for cn " + certificate["commonName"])
+      elif errMsg.startswith("NXDOMAIN"):
         cursor.execute("INSERT INTO dnsLookups (certSqlId, region, lookupError) VALUES ({}, 'Los Angeles', '{}')"
           .format(certificate["sqlId"], "NXDOMAIN"))
         conn.commit()

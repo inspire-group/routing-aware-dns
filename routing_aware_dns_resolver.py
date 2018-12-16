@@ -9,8 +9,9 @@ import dns.resolver
 import dns.rdatatype
 import dns.message
 import dns.exception
-import random
 
+import random
+import time
 import sys
 
 
@@ -49,20 +50,19 @@ def lookupA(name):
   return lookupName(name, dns.rdatatype.A)
 
 def lookupName(name, record):
-  return lookupNameRecursive(name, record, 8, False)
+  return lookupNameRecursive(name, record, 8, False, 3)
 
 
 
 listOfAllRootServersAndIPs = [("a.root-servers.net.", "198.41.0.4"), ("b.root-servers.net.", "199.9.14.201"), ("c.root-servers.net.", "192.33.4.12"), ("d.root-servers.net.", "199.7.91.13"), ("e.root-servers.net.", "192.203.230.10"), ("f.root-servers.net.", "192.5.5.241"), ("g.root-servers.net.", "192.112.36.4"), ("h.root-servers.net.", "198.97.190.53"), ("i.root-servers.net.", "192.36.148.17"), ("j.root-servers.net.", "192.58.128.30"), ("k.root-servers.net.", "193.0.14.129"), ("l.root-servers.net.", "199.7.83.42"), ("m.root-servers.net.", "202.12.27.33")]
 
-def lookupNameRecursive(name, record, cnameChainsToFollow, resolveAllGlueless):
-  return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless)
+def lookupNameRecursive(name, record, cnameChainsToFollow, resolveAllGlueless, masterTimeout):
+  return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless, masterTimeout, time.time())
 
-def lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, cache, resolveAllGlueless):
-  return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, 30)
+def lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, cache, resolveAllGlueless, masterTimeout, queryStartTime):
+  return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, 30, masterTimeout, queryStartTime)
 
-def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, fullRecursionLimit):
-
+def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, fullRecursionLimit, masterTimeout, queryStartTime):
   if (name, record) in cache:
     return cache[(name, record)]
 
@@ -78,6 +78,8 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   #backupResolver.nameservers = ["8.8.8.8"]
   backupResolverAnswer = None
   try:
+    if time.time() - queryStartTime > masterTimeout:
+      raise ValueError("MasterTimeout for domain {}.".format(name))
     backupResolverResponse = backupResolver.query(name, record).response
     backupResolverAnswer = backupResolverResponse.answer
   except dns.resolver.NoNameservers as nsError:
@@ -112,7 +114,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       if isinstance(ipOrLookup, basestring):
         nameserver = ipOrLookup
       elif ipOrLookup == None:
-        nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1)
+        nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
         listOfAllNameServersAndLookupsOrIPs[nsIndex] = (nameserverName, nsLookup)
         nameserver = getAddressForHostnameFromResultChain(nsLookup)
       else:
@@ -120,6 +122,8 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       #print("chosen ns: {}".format(nameserverName))
       message = dns.message.make_query(name, record, want_dnssec=True)
       try:
+        if time.time() - queryStartTime > masterTimeout:
+          raise ValueError("MasterTimeout for domain {}.".format(name))
         response = dns.query.udp(message, nameserver, timeout=4, source=None, ignore_trailing=True)
       except dns.exception.Timeout:
         listOfFailedNameserverIndexes.append((nsIndex, "Timeout"))
@@ -159,7 +163,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
           raise ValueError("CNAME chain too long.")
         else:
           res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet)]
-          res.extend(lookupNameRecursiveWithCache(random.choice(answerRRSet).target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless))
+          res.extend(lookupNameRecursiveWithCache(random.choice(answerRRSet).target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless, masterTimeout, queryStartTime))
           cache[(name, record)] = res
           return res
       res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet)]
@@ -201,7 +205,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       listOfGluelessNameServersAndLookups = []
       if resolveAllGlueless:
         for gluelessNameServer in listOfGluelessNameServers:
-          listOfGluelessNameServersAndLookups.append((gluelessNameServer, lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1)))
+          listOfGluelessNameServersAndLookups.append((gluelessNameServer, lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)))
       else:
         listOfGluelessNameServersAndLookups = [(gluelessNameServer, None) for gluelessNameServer in listOfGluelessNameServers]        
       listOfAllNameServersAndLookupsOrIPs = listOfGluedNameServersAndIPs[:]
