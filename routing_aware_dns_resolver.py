@@ -80,7 +80,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   try:
     if time.time() - queryStartTime > masterTimeout:
       raise ValueError("MasterTimeout for domain {}.".format(name))
-    backupResolverResponse = backupResolver.query(name, record).response
+    backupResolverResponse = backupResolver.resolve(name, record).response
     backupResolverAnswer = backupResolverResponse.answer
   except dns.resolver.NoNameservers as nsError:
     if "answered SERVFAIL" in nsError.msg:
@@ -106,12 +106,12 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
     listOfFailedNameserverIndexes = []
     response = ""
     while True:
-      validIndexes = list(set(xrange(len(listOfAllNameServersAndLookupsOrIPs))) - set([index for (index, _) in listOfFailedNameserverIndexes]))
+      validIndexes = list(set(range(len(listOfAllNameServersAndLookupsOrIPs))) - set([index for (index, _) in listOfFailedNameserverIndexes]))
       if len(validIndexes) == 0:
         raise ValueError("NoNameservers for domain {}".format(name))
       nsIndex = random.choice(validIndexes)
       (nameserverName, ipOrLookup) = listOfAllNameServersAndLookupsOrIPs[nsIndex]
-      if isinstance(ipOrLookup, basestring):
+      if isinstance(ipOrLookup, str):
         nameserver = ipOrLookup
       elif ipOrLookup == None:
         nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
@@ -216,10 +216,10 @@ def getFullDNSTargetIPList(lookupResult):
   for cnameLookup in lookupResult:
     dnsSecCount = cnameLookup[3]
     completeNameServerLists = cnameLookup[1]
-    for zoneIndex in xrange(dnsSecCount, len(completeNameServerLists)):
+    for zoneIndex in range(dnsSecCount, len(completeNameServerLists)):
         completeNameServerList = completeNameServerLists[zoneIndex]
         for nsName, nsIPOrLookup in completeNameServerList:
-            if isinstance(nsIPOrLookup, basestring):
+            if isinstance(nsIPOrLookup, str):
               ipList.append(nsIPOrLookup)
             elif nsIPOrLookup != None:
               ipList.extend(getFullDNSTargetIPList(nsIPOrLookup))
@@ -248,7 +248,7 @@ def getPartialDNSTargetIPList(lookupResult):
   for cnameLookup in lookupResult:
     dnsSecCount = cnameLookup[3]
     nameServerList = cnameLookup[0]
-    for zoneIndex in xrange(dnsSecCount, len(nameServerList)):
+    for zoneIndex in range(dnsSecCount, len(nameServerList)):
         (nsName, nsIP) = nameServerList[zoneIndex]
         ipList.append(nsIP)
   return ipList
