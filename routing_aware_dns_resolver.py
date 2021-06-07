@@ -70,12 +70,12 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
     raise ValueError("Recursed too much when performing query for domain {}.".format(name))
   backupResolver = dns.resolver.Resolver()
   # Use local bind as backup resolver for DNSSEC validation.
-  backupResolver.nameservers = ["127.0.0.1"]
+  #backupResolver.nameservers = ["127.0.0.1"]
   backupResolver.timeout = 5
   backupResolver.lifetime = 5
   # USe Google DNS as backup resolver.
 
-  #backupResolver.nameservers = ["8.8.8.8"]
+  backupResolver.nameservers = ["8.8.8.8"]
   backupResolverAnswer = None
   try:
     if time.time() - queryStartTime > masterTimeout:
@@ -213,6 +213,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
 
 def getFullDNSTargetIPList(lookupResult):
   ipList = []
+  ipv6List = []
   for cnameLookup in lookupResult:
     dnsSecCount = cnameLookup[3]
     completeNameServerLists = cnameLookup[1]
@@ -222,19 +223,22 @@ def getFullDNSTargetIPList(lookupResult):
             if isinstance(nsIPOrLookup, str):
               ipList.append(nsIPOrLookup)
             elif nsIPOrLookup != None:
-              ipList.extend(getFullDNSTargetIPList(nsIPOrLookup))
-  return list(set(ipList))
+              fullTargetIPList = getFullDNSTargetIPList(nsIPOrLookup)
+              ipList.extend(fullTargetIPList[0])
+              ipv6List.extend(fullTargetIPList[1])
+  return (list(set(ipList)),list(set(ipv6List)))
 
 # This is the full list of IPs that could be hijacked.
 # Use this to calculate attack viability probability.
+# This function is deprecated. AAAA recrods need to be looked up in another lookup to spport IPv6.
 def getFullTargetIPList(name, record, includeARecords):
   if includeARecords:
     if record != dns.rdatatype.A:
       raise ValueError("Requested inclusion of A records in target IP list but query was for other record type.", record)
     lookupResult = lookupName(name, record)
-    res = getFullDNSTargetIPList(lookupResult)
+    (res, resv6) = getFullDNSTargetIPList(lookupResult)
     res.extend(getAllAddressesForHostnameFromResultChain(lookupResult))
-    return list(set(res))
+    return (list(set(res)),resv6)
   else:
     return getFullDNSTargetIPList(lookupName(name, record))
 
@@ -251,7 +255,7 @@ def getPartialDNSTargetIPList(lookupResult):
     for zoneIndex in range(dnsSecCount, len(nameServerList)):
         (nsName, nsIP) = nameServerList[zoneIndex]
         ipList.append(nsIP)
-  return ipList
+  return (ipList,[])
 
 
 def getPartialTargetIPList(name, record, includeARecords):
@@ -259,9 +263,9 @@ def getPartialTargetIPList(name, record, includeARecords):
     if record != dns.rdatatype.A:
       raise ValueError("Requested inclusion of A records in target IP list but query was for other record type.", record)
     lookupResult = lookupName(name, record)
-    res = getPartialDNSTargetIPList(lookupResult)
+    (res, resv6) = getPartialDNSTargetIPList(lookupResult)
     res.append(getAddressForHostnameFromResultChain(lookupResult))
-    return res
+    return (res, resv6)
   else:
     return getPartialDNSTargetIPList(lookupName(name, record))
 
