@@ -269,6 +269,19 @@ def getPartialTargetIPList(name, record, includeARecords):
   else:
     return getPartialDNSTargetIPList(lookupName(name, record))
 
+def performFullLookupForName(name):
+  lookupv4 = lookupName(name, dns.rdatatype.A)
+  lookupv6 = lookupName(name, dns.rdatatype.AAAA)
+  aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
+  aaaaRecords = getAllAddressesForHostnameFromResultChain(lookupv6)
+  (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
+  (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
+  DNSTargetIPsv4 = list(set(lookup4DNSIPsv4).union(set(lookup6DNSIPsv4)))
+  DNSTargetIPsv6 = list(set(lookup4DNSIPsv6).union(set(lookup6DNSIPsv6)))
+  matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
+  matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
+  return (aRecords, aaaaRecords, DNSTargetIPsv4, DNSTargetIPsv6, matchedBackupResolverv4, matchedBackupResolverv6)
+
 
 if __name__ == "__main__":
   domain = sys.argv[1]
