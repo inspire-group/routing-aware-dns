@@ -54,7 +54,19 @@ def lookupName(name, record):
 
 
 
-listOfAllRootServersAndIPs = [("a.root-servers.net.", "198.41.0.4"), ("b.root-servers.net.", "199.9.14.201"), ("c.root-servers.net.", "192.33.4.12"), ("d.root-servers.net.", "199.7.91.13"), ("e.root-servers.net.", "192.203.230.10"), ("f.root-servers.net.", "192.5.5.241"), ("g.root-servers.net.", "192.112.36.4"), ("h.root-servers.net.", "198.97.190.53"), ("i.root-servers.net.", "192.36.148.17"), ("j.root-servers.net.", "192.58.128.30"), ("k.root-servers.net.", "193.0.14.129"), ("l.root-servers.net.", "199.7.83.42"), ("m.root-servers.net.", "202.12.27.33")]
+listOfAllRootServersAndIPs = [("a.root-servers.net.", "198.41.0.4", "2001:503:ba3e::2:30"), 
+("b.root-servers.net.", "199.9.14.201", "2001:500:200::b"), 
+("c.root-servers.net.", "192.33.4.12", "2001:500:2::c"), 
+("d.root-servers.net.", "199.7.91.13", "2001:500:2d::d"), 
+("e.root-servers.net.", "192.203.230.10", "2001:500:a8::e"), 
+("f.root-servers.net.", "192.5.5.241", "2001:500:2f::f"), 
+("g.root-servers.net.", "192.112.36.4", "2001:500:12::d0d"), 
+("h.root-servers.net.", "198.97.190.53", "2001:500:1::53"), 
+("i.root-servers.net.", "192.36.148.17", "2001:7fe::53"), 
+("j.root-servers.net.", "192.58.128.30", "2001:503:c27::2:30"), 
+("k.root-servers.net.", "193.0.14.129", "2001:7fd::1"), 
+("l.root-servers.net.", "199.7.83.42", "2001:500:9f::42"), 
+("m.root-servers.net.", "202.12.27.33", "2001:dc3::35")]
 
 def lookupNameRecursive(name, record, cnameChainsToFollow, resolveAllGlueless, masterTimeout):
   return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless, masterTimeout, time.time())
@@ -88,9 +100,9 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
     else:
       raise
   except dns.resolver.NXDOMAIN as nsError:
-    raise ValueError("NXDOMAIN for domain {}.".format(name))
+    raise ValueError("NXDOMAIN for domain {} in record type {}.".format(name, record))
   except dns.resolver.NoAnswer as nsError:
-    raise ValueError("NoAnswer for domain {}.".format(name))
+    raise ValueError("NoAnswer for domain {} in record type {}.".format(name, record))
   
 
   nameServerList = []
@@ -110,12 +122,13 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       if len(validIndexes) == 0:
         raise ValueError("NoNameservers for domain {}".format(name))
       nsIndex = random.choice(validIndexes)
-      (nameserverName, ipOrLookup) = listOfAllNameServersAndLookupsOrIPs[nsIndex]
+      (nameserverName, ipOrLookup, ipOrLookupv6) = listOfAllNameServersAndLookupsOrIPs[nsIndex]
       if isinstance(ipOrLookup, str):
         nameserver = ipOrLookup
       elif ipOrLookup == None:
         nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
-        listOfAllNameServersAndLookupsOrIPs[nsIndex] = (nameserverName, nsLookup)
+        nsLookupv6 = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
+        listOfAllNameServersAndLookupsOrIPs[nsIndex] = (nameserverName, nsLookup, nsLookupv6)
         nameserver = getAddressForHostnameFromResultChain(nsLookup)
       else:
         nameserver = getAddressForHostnameFromResultChain(ipOrLookup)
@@ -124,7 +137,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       try:
         if time.time() - queryStartTime > masterTimeout:
           raise ValueError("MasterTimeout for domain {}.".format(name))
-        response = dns.query.udp(message, nameserver, timeout=4, source=None, ignore_trailing=True)
+        (response, tcp) = dns.query.udp_with_fallback(message, nameserver, timeout=4, source=None, ignore_trailing=True)
       except dns.exception.Timeout:
         listOfFailedNameserverIndexes.append((nsIndex, "Timeout"))
         continue
@@ -188,12 +201,44 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       listOfGluelessNameServers = listOfAllNameServers[:]
       listOfGluedNameServersAndIPs = []
       for g in response.additional:
-        if g.rdtype != dns.rdatatype.A:
+        if g.rdtype != dns.rdatatype.A and g.rdtype != dns.rdatatype.AAAA:
           continue
-        if g.name.to_text() in listOfAllNameServers:
-          listOfGluelessNameServers.remove(g.name.to_text())
-          for nsAddress in g:
-            listOfGluedNameServersAndIPs.append((g.name.to_text(), nsAddress.address))
+        # Treat the ipv4 and ipv6 case separately.
+        if g.rdtype == dns.rdatatype.A:
+          if g.name.to_text() in listOfAllNameServers:
+            # If we found a glue record for a server, make sure it is removed from the glueless list.
+            if g.name.to_text() in listOfGluelessNameServers:
+              listOfGluelessNameServers.remove(g.name.to_text())
+            # Iterate through listed addresses in the DNS response.
+            for nsAddress in g:
+              # If the nameserver is already in not already in the list of glued servers, add it with a blank IPv6 record.
+              if g.name.to_text() not in [t[0] for t in listOfGluedNameServersAndIPs]:
+                listOfGluedNameServersAndIPs.append((g.name.to_text(), nsAddress.address, None))
+              else:
+                # Else it might already be listed with an IPv6 record, iterate through the list, find the index and update the IPv4 record.
+                for i in range(len(listOfGluedNameServersAndIPs)):
+                  if listOfGluedNameServersAndIPs[i][0] == g.name.to_text():
+                    (nsname, ipv4, ipv6) = listOfGluedNameServersAndIPs[i]
+                    listOfGluedNameServersAndIPs[i] = (nsname, nsAddress.address, ipv6)
+        elif g.rdtype == dns.rdatatype.AAAA:
+          if g.name.to_text() in listOfAllNameServers:
+            # If we found a glue record for a server, make sure it is removed from the glueless list.
+            if g.name.to_text() in listOfGluelessNameServers:
+              listOfGluelessNameServers.remove(g.name.to_text())
+            # The above line could cause a glitch with a server that has a glued IPv6 but not IPv4 record. If we find a v6 glue record, we remove the server from the glueless list. However, the dns query code only sends to IPv4 addresses. So does a server with a glued v6 address count as glueless (since we need another lookup to query it) or glued (since we do have an IP for it and a production DNS environment could resolve it).
+            # The above line lists servers with only v6 addresses as glued, but this will break later in the code that cannot currently handle a glued v6 record.
+            # Iterate through listed addresses in the DNS response.
+            for nsAddress in g:
+              # If the nameserver is already in not already in the list of glued servers, add it with a blank IPv4 record.
+              if g.name.to_text() not in [t[0] for t in listOfGluedNameServersAndIPs]:
+                listOfGluedNameServersAndIPs.append((g.name.to_text(), None, nsAddress.address))
+              else:
+                # Else it might already be listed with an IPv6 record, iterate through the list, find the index and update the IPv4 record.
+                for i in range(len(listOfGluedNameServersAndIPs)):
+                  if listOfGluedNameServersAndIPs[i][0] == g.name.to_text():
+                    (nsname, ipv4, ipv6) = listOfGluedNameServersAndIPs[i]
+                    listOfGluedNameServersAndIPs[i] = (nsname, ipv4, nsAddress.address)
+
       #if len(listOfGluedNameServersAndIPs) == 0:
       #  print("Authoratative NS not found in glue records.")
       #  print("Glueless DNS not supported.")
@@ -205,9 +250,9 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       listOfGluelessNameServersAndLookups = []
       if resolveAllGlueless:
         for gluelessNameServer in listOfGluelessNameServers:
-          listOfGluelessNameServersAndLookups.append((gluelessNameServer, lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)))
+          listOfGluelessNameServersAndLookups.append((gluelessNameServer, lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime), lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)))
       else:
-        listOfGluelessNameServersAndLookups = [(gluelessNameServer, None) for gluelessNameServer in listOfGluelessNameServers]        
+        listOfGluelessNameServersAndLookups = [(gluelessNameServer, None, None) for gluelessNameServer in listOfGluelessNameServers]        
       listOfAllNameServersAndLookupsOrIPs = listOfGluedNameServersAndIPs[:]
       listOfAllNameServersAndLookupsOrIPs.extend(listOfGluelessNameServersAndLookups)
 
@@ -219,13 +264,21 @@ def getFullDNSTargetIPList(lookupResult):
     completeNameServerLists = cnameLookup[1]
     for zoneIndex in range(dnsSecCount, len(completeNameServerLists)):
         completeNameServerList = completeNameServerLists[zoneIndex]
-        for nsName, nsIPOrLookup in completeNameServerList:
+        for nsName, nsIPOrLookup, nsIPOrLookupV6 in completeNameServerList:
             if isinstance(nsIPOrLookup, str):
               ipList.append(nsIPOrLookup)
             elif nsIPOrLookup != None:
               fullTargetIPList = getFullDNSTargetIPList(nsIPOrLookup)
               ipList.extend(fullTargetIPList[0])
               ipv6List.extend(fullTargetIPList[1])
+
+            if isinstance(nsIPOrLookupV6, str):
+              ipv6List.append(nsIPOrLookupV6)
+            elif nsIPOrLookupV6 != None:
+              fullTargetIPList = getFullDNSTargetIPList(nsIPOrLookupV6)
+              ipList.extend(fullTargetIPList[0])
+              ipv6List.extend(fullTargetIPList[1])
+              
   return (list(set(ipList)),list(set(ipv6List)))
 
 # This is the full list of IPs that could be hijacked.
@@ -270,16 +323,45 @@ def getPartialTargetIPList(name, record, includeARecords):
     return getPartialDNSTargetIPList(lookupName(name, record))
 
 def performFullLookupForName(name):
-  lookupv4 = lookupName(name, dns.rdatatype.A)
-  lookupv6 = lookupName(name, dns.rdatatype.AAAA)
-  aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
-  aaaaRecords = getAllAddressesForHostnameFromResultChain(lookupv6)
-  (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
-  (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
+  aRecords = []
+  aaaaRecords = []
+  DNSTargetIPsv4 = []
+  DNSTargetIPsv6 = []
+  matchedBackupResolverv4 = False
+  matchedBackupResolverv6 = False
+  lookup4DNSIPsv4 = []
+  lookup4DNSIPsv6 = []
+  lookup6DNSIPsv4 = []
+  lookup6DNSIPsv6 = []
+  try:
+    lookupv4 = lookupName(name, dns.rdatatype.A)
+    aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
+    (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
+    matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
+  except ValueError as lookupError:
+    if "NoAnswer" not in str(lookupError):
+      raise lookupError
+    else:
+      # This case covers domains that have only an IPv6. These are not really errors since the domains are valid, but there is not associated IPv4 lookup data.
+      pass
+      #print("No answer error")
+
+  try:
+    lookupv6 = lookupName(name, dns.rdatatype.AAAA)
+    aaaaRecords = getAllAddressesForHostnameFromResultChain(lookupv6)
+    (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
+    matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
+  except ValueError as lookupError:
+    if "NoAnswer" not in str(lookupError):
+      raise lookupError
+    else:
+      # This case covers domains that have only an IPv4. These are not really errors since the domains are valid.
+      pass
+      #print("No answer error")
+
   DNSTargetIPsv4 = list(set(lookup4DNSIPsv4).union(set(lookup6DNSIPsv4)))
   DNSTargetIPsv6 = list(set(lookup4DNSIPsv6).union(set(lookup6DNSIPsv6)))
-  matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
-  matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
+  
   return (aRecords, aaaaRecords, DNSTargetIPsv4, DNSTargetIPsv6, matchedBackupResolverv4, matchedBackupResolverv6)
 
 
