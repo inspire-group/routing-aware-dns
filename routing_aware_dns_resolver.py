@@ -68,6 +68,7 @@ listOfAllRootServersAndIPs = [("a.root-servers.net.", "198.41.0.4", "2001:503:ba
 ("l.root-servers.net.", "199.7.83.42", "2001:500:9f::42"), 
 ("m.root-servers.net.", "202.12.27.33", "2001:dc3::35")]
 
+
 def lookupNameRecursive(name, record, cnameChainsToFollow, resolveAllGlueless, masterTimeout):
   return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless, masterTimeout, time.time())
 
@@ -76,10 +77,13 @@ def lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, cache, resol
 
 def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, fullRecursionLimit, masterTimeout, queryStartTime):
   if (name, record) in cache:
+    if cache[(name, record)]:
+      raise ValueError("Cyclic name dependency not caught.")
     return cache[(name, record)]
-
   if fullRecursionLimit < 0:
     raise ValueError("Recursed too much when performing query for domain {}.".format(name))
+  # Insert a lookup in progress token in the cache.
+  cache[(name, record)] = None
   backupResolver = dns.resolver.Resolver()
   # Use local bind as backup resolver for DNSSEC validation.
   #backupResolver.nameservers = ["127.0.0.1"]
@@ -126,6 +130,10 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       if isinstance(ipOrLookup, str):
         nameserver = ipOrLookup
       elif ipOrLookup == None:
+        if (nameserverName, dns.rdatatype.A) in cache and cache[(nameserverName, dns.rdatatype.A)] == None:
+          # Case where there is a cycle in the dependency graph and the nameserver chosen is already being resolved.
+          listOfFailedNameserverIndexes.append((nsIndex, "Cyclic"))
+          continue
         nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
         nsLookupv6 = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
         listOfAllNameServersAndLookupsOrIPs[nsIndex] = (nameserverName, nsLookup, nsLookupv6)
@@ -250,7 +258,11 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       listOfGluelessNameServersAndLookups = []
       if resolveAllGlueless:
         for gluelessNameServer in listOfGluelessNameServers:
-          listOfGluelessNameServersAndLookups.append((gluelessNameServer, lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime), lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)))
+          if (gluelessNameServer, dns.rdatatype.A) in cache and cache[(gluelessNameServer, dns.rdatatype.A)] == None:
+            # This is the case where the gleuless server is a cyclic dependency. Do not resolve this glueless server as it will cause a loop.
+            listOfGluelessNameServersAndLookups.append((gluelessNameServer, None, None))
+          else:
+            listOfGluelessNameServersAndLookups.append((gluelessNameServer, lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime), lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)))
       else:
         listOfGluelessNameServersAndLookups = [(gluelessNameServer, None, None) for gluelessNameServer in listOfGluelessNameServers]        
       listOfAllNameServersAndLookupsOrIPs = listOfGluedNameServersAndIPs[:]
