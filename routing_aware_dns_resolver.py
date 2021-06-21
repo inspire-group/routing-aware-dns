@@ -49,8 +49,9 @@ def getAllAddressesForHostnameFromResultChain(resultChain):
 def lookupA(name):
   return lookupName(name, dns.rdatatype.A)
 
-def lookupName(name, record):
-  return lookupNameRecursive(name, record, 8, False, 3)
+def lookupName(name, record, recurssion_limit=10, resolve_all_gleuless=True, master_timeout=10):
+  #return lookupNameRecursive(name, record, 8, False, 3)
+  return lookupNameRecursive(name, record, recurssion_limit, resolve_all_gleuless, master_timeout)
 
 
 
@@ -76,8 +77,9 @@ def lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, cache, resol
   return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, 30, masterTimeout, queryStartTime)
 
 def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, fullRecursionLimit, masterTimeout, queryStartTime):
+  #print(f"lookup for name {name} with record {record} and cache {cache.keys()}")
   if (name, record) in cache:
-    if cache[(name, record)]:
+    if cache[(name, record)] == None:
       raise ValueError("Cyclic name dependency not caught.")
     return cache[(name, record)]
   if fullRecursionLimit < 0:
@@ -87,8 +89,8 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   backupResolver = dns.resolver.Resolver()
   # Use local bind as backup resolver for DNSSEC validation.
   #backupResolver.nameservers = ["127.0.0.1"]
-  backupResolver.timeout = 5
-  backupResolver.lifetime = 5
+  backupResolver.timeout = masterTimeout
+  backupResolver.lifetime = masterTimeout
   # USe Google DNS as backup resolver.
 
   backupResolver.nameservers = ["8.8.8.8"]
@@ -107,6 +109,8 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
     raise ValueError("NXDOMAIN for domain {} in record type {}.".format(name, record))
   except dns.resolver.NoAnswer as nsError:
     raise ValueError("NoAnswer for domain {} in record type {}.".format(name, record))
+  except dns.exception.Timeout as nsError:
+    raise ValueError("MasterTimeout for domain {}.".format(name))
   
 
   nameServerList = []
@@ -130,14 +134,26 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       if isinstance(ipOrLookup, str):
         nameserver = ipOrLookup
       elif ipOrLookup == None:
+        # If there is a cyclic dependency, do not use record.
         if (nameserverName, dns.rdatatype.A) in cache and cache[(nameserverName, dns.rdatatype.A)] == None:
           # Case where there is a cycle in the dependency graph and the nameserver chosen is already being resolved.
           listOfFailedNameserverIndexes.append((nsIndex, "Cyclic"))
           continue
-        nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
-        nsLookupv6 = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
-        listOfAllNameServersAndLookupsOrIPs[nsIndex] = (nameserverName, nsLookup, nsLookupv6)
-        nameserver = getAddressForHostnameFromResultChain(nsLookup)
+        # Try a glueless lookup. If failed, do not use nameserver.
+        try:
+          nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
+          # Try the ipv6 lookup for recording purposes. If it fails, we can still use the ns but, leave the V6 info blank.
+          nsLookupv6 = None
+          try:
+            nsLookupv6 = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
+          except:
+            # No action needs to be taken if the ipv6 lookup of a glueless fails. Simply soft fail and continue with the IPv4 lookup.
+            pass
+          listOfAllNameServersAndLookupsOrIPs[nsIndex] = (nameserverName, nsLookup, nsLookupv6)
+          nameserver = getAddressForHostnameFromResultChain(nsLookup)
+        except ValueError:
+          listOfFailedNameserverIndexes.append((nsIndex, "Glueless lookup failed"))
+          continue
       else:
         nameserver = getAddressForHostnameFromResultChain(ipOrLookup)
       #print("chosen ns: {}".format(nameserverName))
@@ -262,7 +278,19 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
             # This is the case where the gleuless server is a cyclic dependency. Do not resolve this glueless server as it will cause a loop.
             listOfGluelessNameServersAndLookups.append((gluelessNameServer, None, None))
           else:
-            listOfGluelessNameServersAndLookups.append((gluelessNameServer, lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime), lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)))
+            try:
+              # Try the IPv4 lookup.
+              lookupv4 = lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
+              lookupv6 = None
+              try:
+                lookupv6 = lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
+              except:
+                # If the IPv6 lookup fails, we can simply put none and keep the nameserver record in place.
+                pass
+              listOfGluelessNameServersAndLookups.append((gluelessNameServer, lookupv4, lookupv6))
+            except:
+              # If the IPv4 lookup fails, this is a busted nameserver and we should put in a no lookup result. Do not try IPv6 lookup since we cannot query it. I do not believe the nameserver selection code properly handles a glueless server with only an IPv6 lookup.
+              listOfGluelessNameServersAndLookups.append((gluelessNameServer, None, None))
       else:
         listOfGluelessNameServersAndLookups = [(gluelessNameServer, None, None) for gluelessNameServer in listOfGluelessNameServers]        
       listOfAllNameServersAndLookupsOrIPs = listOfGluedNameServersAndIPs[:]
@@ -351,12 +379,25 @@ def performFullLookupForName(name):
     (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
     matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
   except ValueError as lookupError:
-    if "NoAnswer" not in str(lookupError):
-      raise lookupError
-    else:
+    if "NoAnswer" in str(lookupError):
       # This case covers domains that have only an IPv6. These are not really errors since the domains are valid, but there is not associated IPv4 lookup data.
       pass
       #print("No answer error")
+    elif "MasterTimeout" in str(lookupError):
+      # This is the case where a timeout is reached, to attempt to get a valid lookup, we can redo the lookup with resolve all gleuless as false.
+      try:
+        lookupv4 = lookupName(name, dns.rdatatype.A, resolve_all_gleuless=False)
+        aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
+        (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
+        matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
+      except ValueError as lookupError2:
+        if "NoAnswer" in str(lookupError2):
+          pass
+        else:
+          raise lookupError2
+    else:
+      # This is the case where the calling script needs to handle the error.
+      raise lookupError
 
   try:
     lookupv6 = lookupName(name, dns.rdatatype.AAAA)
@@ -364,12 +405,23 @@ def performFullLookupForName(name):
     (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
     matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
   except ValueError as lookupError:
-    if "NoAnswer" not in str(lookupError):
-      raise lookupError
-    else:
+    if "NoAnswer" in str(lookupError):
       # This case covers domains that have only an IPv4. These are not really errors since the domains are valid.
       pass
-      #print("No answer error")
+    elif "MasterTimeout" in str(lookupError):
+      # This is the case where a timeout is reached, to attempt to get a valid lookup, we can redo the lookup with resolve all gleuless as false.
+      try:
+        lookupv6 = lookupName(name, dns.rdatatype.AAAA, resolve_all_gleuless=False)
+        aaaaRecords = getAllAddressesForHostnameFromResultChain(lookupv6)
+        (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
+        matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
+      except ValueError as lookupError2:
+        if "NoAnswer" in str(lookupError2):
+          pass
+        else:
+          raise lookupError2
+    else:
+      raise lookupError
 
   DNSTargetIPsv4 = list(set(lookup4DNSIPsv4).union(set(lookup6DNSIPsv4)))
   DNSTargetIPsv6 = list(set(lookup4DNSIPsv6).union(set(lookup6DNSIPsv6)))
