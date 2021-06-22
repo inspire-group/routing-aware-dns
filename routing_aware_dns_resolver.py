@@ -373,11 +373,14 @@ def performFullLookupForName(name):
   lookup4DNSIPsv6 = []
   lookup6DNSIPsv4 = []
   lookup6DNSIPsv6 = []
+  fullGraphv4 = False
+  fullGraphv6 = False
   try:
     lookupv4 = lookupName(name, dns.rdatatype.A)
     aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
     (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
     matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
+    fullGraphv4 = True
   except ValueError as lookupError:
     if "NoAnswer" in str(lookupError):
       # This case covers domains that have only an IPv6. These are not really errors since the domains are valid, but there is not associated IPv4 lookup data.
@@ -404,6 +407,7 @@ def performFullLookupForName(name):
     aaaaRecords = getAllAddressesForHostnameFromResultChain(lookupv6)
     (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
     matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
+    fullGraphv6 = True
   except ValueError as lookupError:
     if "NoAnswer" in str(lookupError):
       # This case covers domains that have only an IPv4. These are not really errors since the domains are valid.
@@ -426,7 +430,7 @@ def performFullLookupForName(name):
   DNSTargetIPsv4 = list(set(lookup4DNSIPsv4).union(set(lookup6DNSIPsv4)))
   DNSTargetIPsv6 = list(set(lookup4DNSIPsv6).union(set(lookup6DNSIPsv6)))
   
-  return (aRecords, aaaaRecords, DNSTargetIPsv4, DNSTargetIPsv6, matchedBackupResolverv4, matchedBackupResolverv6)
+  return (aRecords, aaaaRecords, DNSTargetIPsv4, DNSTargetIPsv6, matchedBackupResolverv4, matchedBackupResolverv6, fullGraphv4, fullGraphv6)
 
 
 if __name__ == "__main__":
