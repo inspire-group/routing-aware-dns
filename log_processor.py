@@ -23,7 +23,10 @@ JSON_TAG = "JSON="
 MAX_COUNT = 10
 
 logging.basicConfig(filename=LOGGER_FILE, level=logging.DEBUG)
-
+logging.getLogger('boto3').setLevel(logging.CRITICAL)
+logging.getLogger('botocore').setLevel(logging.CRITICAL)
+logging.getLogger('s3transfer').setLevel(logging.CRITICAL)
+logging.getLogger('urllib3').setLevel(logging.CRITICAL)
 
 def read_log_from_bucket(session, log_file):
     logging.info(f'Reading log from bucket {BUCKET_NAME}')
