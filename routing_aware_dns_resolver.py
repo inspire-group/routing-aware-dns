@@ -49,7 +49,7 @@ def getAllAddressesForHostnameFromResultChain(resultChain):
 def lookupA(name):
   return lookupName(name, dns.rdatatype.A)
 
-def lookupName(name, record, recurssion_limit=10, resolve_all_gleuless=True, master_timeout=10):
+def lookupName(name, record, recurssion_limit=10, resolve_all_gleuless=True, master_timeout=100):
   #return lookupNameRecursive(name, record, 8, False, 3)
   return lookupNameRecursive(name, record, recurssion_limit, resolve_all_gleuless, master_timeout)
 
@@ -105,6 +105,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       raise ValueError("SERVFAIL for domain {}. Likely invalid DNSSEC.".format(name))
     else:
       raise
+  # Note in the below code that no answer and NX domain are different. NX domain means there is not NS delegated to that domain. No Answer means an authoritative NS was contacted but did not have a record type listed.
   except dns.resolver.NXDOMAIN as nsError:
     raise ValueError("NXDOMAIN for domain {} in record type {}.".format(name, record))
   except dns.resolver.NoAnswer as nsError:
@@ -363,6 +364,7 @@ def getPartialTargetIPList(name, record, includeARecords):
     return getPartialDNSTargetIPList(lookupName(name, record))
 
 def performFullLookupForName(name):
+  # Note that the behavior of this method can encounter edge cases on domains that return no answer.  
   aRecords = []
   aaaaRecords = []
   DNSTargetIPsv4 = []
@@ -382,10 +384,13 @@ def performFullLookupForName(name):
     matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
     fullGraphv4 = True
   except ValueError as lookupError:
-    if "NoAnswer" in str(lookupError):
+    if "NoAnswer" in str(lookupError) or "NXDOMAIN" in str(lookupError):
       # This case covers domains that have only an IPv6. These are not really errors since the domains are valid, but there is not associated IPv4 lookup data.
-      pass
-      #print("No answer error")
+      # There are two times of no answer error: 1) the backup resolver got no answer 2) the backup resolver got an answer and the custom resolver failed. For the former, we set matched backup resolver to true (although in truth the lookup is aborted if the backup resolver gets no answer).
+      if "different response from backup resolver" not in str(lookupError):
+        matchedBackupResolverv4 = True
+      # Since the no answer came before we failed a full graph lookup, we can probably say this is a full graph even though we never began the custom lookup.
+      fullGraphv4 = True
     elif "MasterTimeout" in str(lookupError):
       # This is the case where a timeout is reached, to attempt to get a valid lookup, we can redo the lookup with resolve all gleuless as false.
       try:
@@ -394,8 +399,9 @@ def performFullLookupForName(name):
         (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
         matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
       except ValueError as lookupError2:
-        if "NoAnswer" in str(lookupError2):
-          pass
+        if "NoAnswer" in str(lookupError2) or "NXDOMAIN" in str(lookupError2):
+          if "different response from backup resolver" not in str(lookupError2):
+            matchedBackupResolverv4 = True
         else:
           raise lookupError2
     else:
@@ -409,9 +415,12 @@ def performFullLookupForName(name):
     matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
     fullGraphv6 = True
   except ValueError as lookupError:
-    if "NoAnswer" in str(lookupError):
+    if "NoAnswer" in str(lookupError) or "NXDOMAIN" in str(lookupError):
       # This case covers domains that have only an IPv4. These are not really errors since the domains are valid.
-      pass
+      # There are two times of no answer error: 1) the backup resolver got no answer 2) the backup resolver got an answer and the custom resolver failed. For the former, we set matched backup resolver to true (although in truth the lookup is aborted if the backup resolver gets no answer).
+      if "different response from backup resolver" not in str(lookupError):
+        matchedBackupResolverv6 = True
+      fullGraphv6 = True
     elif "MasterTimeout" in str(lookupError):
       # This is the case where a timeout is reached, to attempt to get a valid lookup, we can redo the lookup with resolve all gleuless as false.
       try:
@@ -420,8 +429,10 @@ def performFullLookupForName(name):
         (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
         matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
       except ValueError as lookupError2:
-        if "NoAnswer" in str(lookupError2):
-          pass
+        # This statement handles nxdomain and no answer errors the same. These errors of have different meanings and this should probably be separated at some point.
+        if "NoAnswer" in str(lookupError2) or "NXDOMAIN" in str(lookupError2):
+          if "different response from backup resolver" not in str(lookupError2):
+            matchedBackupResolverv6 = True
         else:
           raise lookupError2
     else:
