@@ -25,21 +25,21 @@ def parse_args():
 
 resultsFileName = None
 def writeResult(result):
-  with open(resultsFileName, "w") as f:
+  with open(resultsFileName, "a") as f:
     f.write(result)
     f.write("\n")
 
 
 errorFileName = None
 def writeError(e):
-  with open(errorFileName, "w") as f:
+  with open(errorFileName, "a") as f:
     f.write(e)
     f.write("\n")
 
 
 latencyFileName = None
 def writeLatency(l):
-  with open(latencyFileName, "w") as f:
+  with open(latencyFileName, "a") as f:
     f.write(l)
     f.write("\n")
 
@@ -48,11 +48,13 @@ lookupLatencies = []
 errors = []
 
 
+
 def main(args):
   global resultsFileName, errorFileName, latencyFileName
   resultsFileName = args.results
   errorFileName = args.errors
   latencyFileName = args.latencies
+  domainsResolved = 0
   for line in open(args.domains):
     sline = line.strip()
     if sline == "":
@@ -70,6 +72,8 @@ def main(args):
       writeError(f"Domain: {domain}, value error: {v}")
     except Exception as e:
       writeError(f"Domain: {domain}, other error: {e}")
+    domainsResolved += 1
+    print(f"Domains resolved: {domainsResolved}")
 
 
 if __name__ == '__main__':

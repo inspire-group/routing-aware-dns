@@ -93,7 +93,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   backupResolver.lifetime = masterTimeout
   # USe Google DNS as backup resolver.
 
-  backupResolver.nameservers = ["8.8.8.8"]
+  backupResolver.nameservers = ["127.0.0.1"]
   backupResolverAnswer = None
   try:
     if time.time() - queryStartTime > masterTimeout:
