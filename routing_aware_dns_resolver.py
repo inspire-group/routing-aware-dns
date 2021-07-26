@@ -234,7 +234,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
           raise ValueError("CNAME chain too long.")
         else:
           res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet, pathDependent)]
-          res.extend(lookupNameRecursiveWithCache(random.choice(answerRRSet).target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless, masterTimeout, queryStartTime))
+          res.extend(lookupNameRecursiveWithCache(random.choice(answerRRSet).target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless, check_for_path_dependent_dns, masterTimeout, queryStartTime))
           cache[(name, record)] = res
           return res
       res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet, pathDependent)]
