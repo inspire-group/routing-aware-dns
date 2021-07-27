@@ -18,6 +18,13 @@ import sys
 def checkMatchedBackupResolver(resultChain):
   return resultChain[len(resultChain) - 1][4]
 
+def checkPathDependent(resultChain):
+  # Iterate through CNAME responses, and see if any of them are path dependent (result[6]). If so, return true. Otherwise false.
+  for result in resultChain:
+    if result[6]:
+      return True
+  return False
+
 def getAddressForHostname(name):
   return getAddressForHostnameFromResultChain(lookupA(name))
   
@@ -49,9 +56,9 @@ def getAllAddressesForHostnameFromResultChain(resultChain):
 def lookupA(name):
   return lookupName(name, dns.rdatatype.A)
 
-def lookupName(name, record, recurssion_limit=10, resolve_all_gleuless=True, master_timeout=10):
+def lookupName(name, record, recurssion_limit=10, resolve_all_gleuless=True, check_for_path_dependent_dns=False, master_timeout=100):
   #return lookupNameRecursive(name, record, 8, False, 3)
-  return lookupNameRecursive(name, record, recurssion_limit, resolve_all_gleuless, master_timeout)
+  return lookupNameRecursive(name, record, recurssion_limit, resolve_all_gleuless, check_for_path_dependent_dns, master_timeout)
 
 
 
@@ -70,13 +77,13 @@ listOfAllRootServersAndIPs = [("a.root-servers.net.", "198.41.0.4", "2001:503:ba
 ("m.root-servers.net.", "202.12.27.33", "2001:dc3::35")]
 
 
-def lookupNameRecursive(name, record, cnameChainsToFollow, resolveAllGlueless, masterTimeout):
-  return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless, masterTimeout, time.time())
+def lookupNameRecursive(name, record, cnameChainsToFollow, resolveAllGlueless, check_for_path_dependent_dns, masterTimeout):
+  return lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, {}, resolveAllGlueless, check_for_path_dependent_dns, masterTimeout, time.time())
 
-def lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, cache, resolveAllGlueless, masterTimeout, queryStartTime):
-  return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, 30, masterTimeout, queryStartTime)
+def lookupNameRecursiveWithCache(name, record, cnameChainsToFollow, cache, resolveAllGlueless, check_for_path_dependent_dns, masterTimeout, queryStartTime):
+  return lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, 30, check_for_path_dependent_dns, masterTimeout, queryStartTime)
 
-def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, fullRecursionLimit, masterTimeout, queryStartTime):
+def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow, cache, resolveAllGlueless, fullRecursionLimit, check_for_path_dependent_dns, masterTimeout, queryStartTime):
   #print(f"lookup for name {name} with record {record} and cache {cache.keys()}")
   if (name, record) in cache:
     if cache[(name, record)] == None:
@@ -86,14 +93,18 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
     raise ValueError("Recursed too much when performing query for domain {}.".format(name))
   # Insert a lookup in progress token in the cache.
   cache[(name, record)] = None
+
+  pathDependent = False
+
   backupResolver = dns.resolver.Resolver()
-  # Use local bind as backup resolver for DNSSEC validation.
-  #backupResolver.nameservers = ["127.0.0.1"]
+
   backupResolver.timeout = masterTimeout
   backupResolver.lifetime = masterTimeout
   # USe Google DNS as backup resolver.
 
-  backupResolver.nameservers = ["8.8.8.8"]
+  # Use local bind as backup resolver for DNSSEC validation.
+  backupResolver.nameservers = ["127.0.0.1"]
+  #backupResolver.nameservers = ["8.8.8.8"]
   backupResolverAnswer = None
   try:
     if time.time() - queryStartTime > masterTimeout:
@@ -105,6 +116,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       raise ValueError("SERVFAIL for domain {}. Likely invalid DNSSEC.".format(name))
     else:
       raise
+  # Note in the below code that no answer and NX domain are different. NX domain means there is not NS delegated to that domain. No Answer means an authoritative NS was contacted but did not have a record type listed.
   except dns.resolver.NXDOMAIN as nsError:
     raise ValueError("NXDOMAIN for domain {} in record type {}.".format(name, record))
   except dns.resolver.NoAnswer as nsError:
@@ -123,12 +135,18 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   listOfAllNameServersAndLookupsOrIPs = listOfAllRootServersAndIPs[:]
   dnsSecValid = True
   while True:
+    # This var is only used in the path-dependence DNS check.
+    nameserverindexResponsesTupleList = []
     listOfFailedNameserverIndexes = []
     response = ""
     while True:
       validIndexes = list(set(range(len(listOfAllNameServersAndLookupsOrIPs))) - set([index for (index, _) in listOfFailedNameserverIndexes]))
       if len(validIndexes) == 0:
-        raise ValueError("NoNameservers for domain {}".format(name))
+        # If we run out of valid indexes and we are not checking all servers, this is an error case. If we are checking all servers, this is the proper exit case to the loop.
+        if (not check_for_path_dependent_dns) or len(nameserverindexResponsesTupleList) == 0:
+          raise ValueError("NoNameservers for domain {}".format(name))
+        else:
+          break
       nsIndex = random.choice(validIndexes)
       (nameserverName, ipOrLookup, ipOrLookupv6) = listOfAllNameServersAndLookupsOrIPs[nsIndex]
       if isinstance(ipOrLookup, str):
@@ -141,11 +159,11 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
           continue
         # Try a glueless lookup. If failed, do not use nameserver.
         try:
-          nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
+          nsLookup = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, check_for_path_dependent_dns, masterTimeout, queryStartTime)
           # Try the ipv6 lookup for recording purposes. If it fails, we can still use the ns but, leave the V6 info blank.
           nsLookupv6 = None
           try:
-            nsLookupv6 = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
+            nsLookupv6 = lookupNameRecursiveWithFullRecursionLimit(nameserverName, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, check_for_path_dependent_dns, masterTimeout, queryStartTime)
           except:
             # No action needs to be taken if the ipv6 lookup of a glueless fails. Simply soft fail and continue with the IPv4 lookup.
             pass
@@ -168,7 +186,23 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
       if len(response.answer) == 0 and len(response.authority) == 0:
         listOfFailedNameserverIndexes.append((nsIndex, "No answer or authority"))
         continue
-      break
+      # This is where we talked to a nameserver and got a valid answer. If we need to check all nameservers, simply add to the response tuple list and then continue checking. Otherwise, break and continue.
+      if check_for_path_dependent_dns:
+        nameserverindexResponsesTupleList.append((nsIndex, response))
+        listOfFailedNameserverIndexes.append((nsIndex, "Responded, path dependence checking"))
+      else:
+        break
+    # Response should already have been set to the last resposne. Now we need to check that the responses from all the different nameservers match.
+    if check_for_path_dependent_dns:
+      response = nameserverindexResponsesTupleList[0][1]
+      for nsIndex, responseFromNS in nameserverindexResponsesTupleList:
+        if not compareDNSResponses(response, responseFromNS):
+          #print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!response mismatch, First response:")
+          #print(str(response))
+          #print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!second response:")
+          #print(str(responseFromNS))
+          pathDependent = True
+
     completeNameServerList.append(listOfAllNameServersAndLookupsOrIPs[:])
     nameServerList.append((nameserverName, nameserver))
     if dnsSecTrustChain:
@@ -199,22 +233,25 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
         if cnameChainsToFollow == 0:
           raise ValueError("CNAME chain too long.")
         else:
-          res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet)]
-          res.extend(lookupNameRecursiveWithCache(random.choice(answerRRSet).target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless, masterTimeout, queryStartTime))
+          res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet, pathDependent)]
+          res.extend(lookupNameRecursiveWithCache(random.choice(answerRRSet).target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless, check_for_path_dependent_dns, masterTimeout, queryStartTime))
           cache[(name, record)] = res
           return res
-      res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet)]
+      res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet, pathDependent)]
       cache[(name, record)] = res
       return res
     else:
       resultingNameServersRRsets = [a for a in response.authority if a.rdtype == dns.rdatatype.NS]
       listOfAllNameServers = []
       if len(resultingNameServersRRsets) == 0:
-        print(response.to_text())
-        print([a.to_text() for a in response.answer])
-        print([a.to_text() for a in response.authority])
-        print([a.to_text() for a in response.additional])
-        raise ValueError("No NS records for domain {}.".format(name))
+        # This block can be reached when a domain does not have a record type and we get a different response from the backup resolver.
+        #print(response.to_text())
+        #print([a.to_text() for a in response.answer])
+        #print([a.to_text() for a in response.authority])
+        #print([a.to_text() for a in response.additional])
+        raise ValueError("NoAnswer and different response from backup resolver for domain {}".format(name))
+        # Below is the old error raised. This is ambiguous since the real problem is not that there are no more NS records, its that the nameserver did not give an answer and left the answer section empty. If a domain did not have NS servers, it should be an NXDomain error that is handled above.
+        #raise ValueError("No NS records for domain {}.".format(name))
       nsGroup = resultingNameServersRRsets[0]
 
       zoneList.append(nsGroup.name)
@@ -280,10 +317,10 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
           else:
             try:
               # Try the IPv4 lookup.
-              lookupv4 = lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
+              lookupv4 = lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.A, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, check_for_path_dependent_dns, masterTimeout, queryStartTime)
               lookupv6 = None
               try:
-                lookupv6 = lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, masterTimeout, queryStartTime)
+                lookupv6 = lookupNameRecursiveWithFullRecursionLimit(gluelessNameServer, dns.rdatatype.AAAA, 8, cache, resolveAllGlueless, fullRecursionLimit - 1, check_for_path_dependent_dns, masterTimeout, queryStartTime)
               except:
                 # If the IPv6 lookup fails, we can simply put none and keep the nameserver record in place.
                 pass
@@ -363,6 +400,7 @@ def getPartialTargetIPList(name, record, includeARecords):
     return getPartialDNSTargetIPList(lookupName(name, record))
 
 def performFullLookupForName(name):
+  # Note that the behavior of this method can encounter edge cases on domains that return no answer.  
   aRecords = []
   aaaaRecords = []
   DNSTargetIPsv4 = []
@@ -375,17 +413,24 @@ def performFullLookupForName(name):
   lookup6DNSIPsv6 = []
   fullGraphv4 = False
   fullGraphv6 = False
+  pathDependentv4 = False
+  pathDependentv6 = False
   try:
     lookupv4 = lookupName(name, dns.rdatatype.A)
     aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
     (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
     matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
     fullGraphv4 = True
+    if checkPathDependent(lookupv4):
+      pathDependentv4 = True
   except ValueError as lookupError:
-    if "NoAnswer" in str(lookupError):
+    if "NoAnswer" in str(lookupError) or "NXDOMAIN" in str(lookupError):
       # This case covers domains that have only an IPv6. These are not really errors since the domains are valid, but there is not associated IPv4 lookup data.
-      pass
-      #print("No answer error")
+      # There are two times of no answer error: 1) the backup resolver got no answer 2) the backup resolver got an answer and the custom resolver failed. For the former, we set matched backup resolver to true (although in truth the lookup is aborted if the backup resolver gets no answer).
+      if "different response from backup resolver" not in str(lookupError):
+        matchedBackupResolverv4 = True
+      # Since the no answer came before we failed a full graph lookup, we can probably say this is a full graph even though we never began the custom lookup.
+      fullGraphv4 = True
     elif "MasterTimeout" in str(lookupError):
       # This is the case where a timeout is reached, to attempt to get a valid lookup, we can redo the lookup with resolve all gleuless as false.
       try:
@@ -393,9 +438,12 @@ def performFullLookupForName(name):
         aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
         (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
         matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
+        if checkPathDependent(lookupv4):
+          pathDependentv4 = True
       except ValueError as lookupError2:
-        if "NoAnswer" in str(lookupError2):
-          pass
+        if "NoAnswer" in str(lookupError2) or "NXDOMAIN" in str(lookupError2):
+          if "different response from backup resolver" not in str(lookupError2):
+            matchedBackupResolverv4 = True
         else:
           raise lookupError2
     else:
@@ -408,10 +456,15 @@ def performFullLookupForName(name):
     (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
     matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
     fullGraphv6 = True
+    if checkPathDependent(lookupv6):
+      pathDependentv6 = True
   except ValueError as lookupError:
-    if "NoAnswer" in str(lookupError):
+    if "NoAnswer" in str(lookupError) or "NXDOMAIN" in str(lookupError):
       # This case covers domains that have only an IPv4. These are not really errors since the domains are valid.
-      pass
+      # There are two times of no answer error: 1) the backup resolver got no answer 2) the backup resolver got an answer and the custom resolver failed. For the former, we set matched backup resolver to true (although in truth the lookup is aborted if the backup resolver gets no answer).
+      if "different response from backup resolver" not in str(lookupError):
+        matchedBackupResolverv6 = True
+      fullGraphv6 = True
     elif "MasterTimeout" in str(lookupError):
       # This is the case where a timeout is reached, to attempt to get a valid lookup, we can redo the lookup with resolve all gleuless as false.
       try:
@@ -419,9 +472,13 @@ def performFullLookupForName(name):
         aaaaRecords = getAllAddressesForHostnameFromResultChain(lookupv6)
         (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
         matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
+        if checkPathDependent(lookupv6):
+          pathDependentv6 = True
       except ValueError as lookupError2:
-        if "NoAnswer" in str(lookupError2):
-          pass
+        # This statement handles nxdomain and no answer errors the same. These errors of have different meanings and this should probably be separated at some point.
+        if "NoAnswer" in str(lookupError2) or "NXDOMAIN" in str(lookupError2):
+          if "different response from backup resolver" not in str(lookupError2):
+            matchedBackupResolverv6 = True
         else:
           raise lookupError2
     else:
@@ -430,7 +487,58 @@ def performFullLookupForName(name):
   DNSTargetIPsv4 = list(set(lookup4DNSIPsv4).union(set(lookup6DNSIPsv4)))
   DNSTargetIPsv6 = list(set(lookup4DNSIPsv6).union(set(lookup6DNSIPsv6)))
   
-  return (aRecords, aaaaRecords, DNSTargetIPsv4, DNSTargetIPsv6, matchedBackupResolverv4, matchedBackupResolverv6, fullGraphv4, fullGraphv6)
+  return (aRecords, aaaaRecords, DNSTargetIPsv4, DNSTargetIPsv6, matchedBackupResolverv4, matchedBackupResolverv6, fullGraphv4, fullGraphv6, pathDependentv4, pathDependentv6)
+
+def compareDNSResponses(response1, response2):
+  # If answer records are empty, compare authorities.
+  if len(response1.answer) == 0 and len(response2.answer) == 0:
+    if len(response1.authority) == len(response2.authority):
+      # Case where the authority sections are of the same length and there is no answer.
+      authorityList1 = []
+      # Only compare on NS records. What defines two responses as being "the same" is debatable.
+      for rrset in response1.authority:
+        if rrset.rdtype == dns.rdatatype.NS:
+          for nameserverRecord in rrset:
+            authorityList1.append(nameserverRecord.target.to_text())
+      authorityList2 = []
+      for rrset in response2.authority:
+        if rrset.rdtype == dns.rdatatype.NS:
+          for nameserverRecord in rrset:
+            authorityList2.append(nameserverRecord.target.to_text())
+      authorityList1.sort()
+      authorityList2.sort()
+      if str(authorityList1) == str(authorityList2):
+        # Case where there is no answer, and authority sections are the same.
+        return True
+      else:
+        # Case where there is no answer, and authority sections are same length but different.
+        return False
+    else:
+      # Case where there is no answer and authority section is of different lengths.
+      return False
+  elif len(response1.answer) == len(response2.answer):
+    answerList1 = []
+    for rrset in response1.answer:
+      if rrset.rdtype == dns.rdatatype.A or rrset.rdtype == dns.rdatatype.AAAA:
+        for answerRR in rrset:
+          answerList1.append(answerRR.address)
+
+    answerList2 = []
+    for rrset in response2.answer:
+      if rrset.rdtype == dns.rdatatype.A or rrset.rdtype == dns.rdatatype.AAAA:
+        for answerRR in rrset:
+          answerList2.append(answerRR.address)
+    answerList1.sort()
+    answerList2.sort()
+    if str(answerList1) == str(answerList2):
+      # Case where answers match
+      return True
+    else:
+      # Case where answers are same length but do not match
+      return False
+  else:
+    # Case with answers of uneven length.
+    return False
 
 
 if __name__ == "__main__":
