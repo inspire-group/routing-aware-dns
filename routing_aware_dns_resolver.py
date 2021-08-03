@@ -53,6 +53,18 @@ def getAllAddressesForHostnameFromResultChain(resultChain):
     raise ValueError("The given result chain does not have a valid address. May be a lookup for the wrong record type.", resultChain)
   return res
 
+def getAllBackupResolverAddressesForHostnameFromResultChain(resultChain, record):
+  answer = resultChain[len(resultChain) - 1][7]
+  res = []
+  try:
+    for answerRRSet in answer:
+      if answerRRSet.rdtype == record:
+        for answerRR in answerRRSet:
+          res.append(answerRR.address)
+  except AttributeError:
+    raise ValueError("The given result chain does not have a valid address. May be a lookup for the wrong record type.", resultChain)
+  return res
+
 def lookupA(name):
   return lookupName(name, dns.rdatatype.A)
 
@@ -233,11 +245,11 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
         if cnameChainsToFollow == 0:
           raise ValueError("CNAME chain too long.")
         else:
-          res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet, pathDependent)]
+          res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet, pathDependent, backupResolverAnswer)]
           res.extend(lookupNameRecursiveWithCache(random.choice(answerRRSet).target.to_text(), record, cnameChainsToFollow - 1, cache, resolveAllGlueless, check_for_path_dependent_dns, masterTimeout, queryStartTime))
           cache[(name, record)] = res
           return res
-      res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet, pathDependent)]
+      res = [(nameServerList, completeNameServerList, zoneList, dnsSecCount, answerRRSet == backupResolverAnswer[0], answerRRSet, pathDependent, backupResolverAnswer)]
       cache[(name, record)] = res
       return res
     else:
@@ -415,11 +427,16 @@ def performFullLookupForName(name):
   fullGraphv6 = False
   pathDependentv4 = False
   pathDependentv6 = False
+  backupResolverARecords = []
+  backupResolverAAAARecords = []
+  lookupv4 = None
+  lookupv6 = None
   try:
     lookupv4 = lookupName(name, dns.rdatatype.A)
     aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
     (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
     matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
+    backupResolverARecords = getAllBackupResolverAddressesForHostnameFromResultChain(lookupv4, dns.rdatatype.A)
     fullGraphv4 = True
     if checkPathDependent(lookupv4):
       pathDependentv4 = True
@@ -438,6 +455,7 @@ def performFullLookupForName(name):
         aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
         (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
         matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
+        backupResolverARecords = getAllBackupResolverAddressesForHostnameFromResultChain(lookupv4, dns.rdatatype.A)
         if checkPathDependent(lookupv4):
           pathDependentv4 = True
       except ValueError as lookupError2:
@@ -455,6 +473,7 @@ def performFullLookupForName(name):
     aaaaRecords = getAllAddressesForHostnameFromResultChain(lookupv6)
     (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
     matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
+    backupResolverAAAARecords = getAllBackupResolverAddressesForHostnameFromResultChain(lookupv6, dns.rdatatype.AAAA)
     fullGraphv6 = True
     if checkPathDependent(lookupv6):
       pathDependentv6 = True
@@ -472,6 +491,7 @@ def performFullLookupForName(name):
         aaaaRecords = getAllAddressesForHostnameFromResultChain(lookupv6)
         (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
         matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
+        backupResolverAAAARecords = getAllBackupResolverAddressesForHostnameFromResultChain(lookupv6, dns.rdatatype.AAAA)
         if checkPathDependent(lookupv6):
           pathDependentv6 = True
       except ValueError as lookupError2:
@@ -487,7 +507,7 @@ def performFullLookupForName(name):
   DNSTargetIPsv4 = list(set(lookup4DNSIPsv4).union(set(lookup6DNSIPsv4)))
   DNSTargetIPsv6 = list(set(lookup4DNSIPsv6).union(set(lookup6DNSIPsv6)))
   
-  return (aRecords, aaaaRecords, DNSTargetIPsv4, DNSTargetIPsv6, matchedBackupResolverv4, matchedBackupResolverv6, fullGraphv4, fullGraphv6, pathDependentv4, pathDependentv6)
+  return ((aRecords, aaaaRecords, DNSTargetIPsv4, DNSTargetIPsv6, matchedBackupResolverv4, matchedBackupResolverv6, fullGraphv4, fullGraphv6, pathDependentv4, pathDependentv6, backupResolverARecords, backupResolverAAAARecords), (lookupv4, lookupv6))
 
 def compareDNSResponses(response1, response2):
   # If answer records are empty, compare authorities.
