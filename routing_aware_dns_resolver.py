@@ -4,62 +4,79 @@ import dns.dnssec
 import dns.message
 import dns.resolver
 import dns.rdatatype
-import dns.message
 import dns.exception
 import random
 import time
 import sys
+from collections import namedtuple
+
+
+def l2d(ns_list):
+    d = {}
+    for k, v4, v6 in ns_list:
+        d[k] = (v4, v6)
+    return d
+
+
+def d2l(ns_dict):
+    res = []
+    for k, (v4, v6) in ns_dict.items():
+        res.append((k, v4, v6))
+    return res
 
 
 ROOT_SERVER_IP_LIST = [
-                              ("a.root-servers.net.", "198.41.0.4", "2001:503:ba3e::2:30"), 
-                              ("b.root-servers.net.", "199.9.14.201", "2001:500:200::b"), 
-                              ("c.root-servers.net.", "192.33.4.12", "2001:500:2::c"), 
-                              ("d.root-servers.net.", "199.7.91.13", "2001:500:2d::d"), 
-                              ("e.root-servers.net.", "192.203.230.10", "2001:500:a8::e"), 
-                              ("f.root-servers.net.", "192.5.5.241", "2001:500:2f::f"), 
-                              ("g.root-servers.net.", "192.112.36.4", "2001:500:12::d0d"), 
-                              ("h.root-servers.net.", "198.97.190.53", "2001:500:1::53"), 
-                              ("i.root-servers.net.", "192.36.148.17", "2001:7fe::53"), 
-                              ("j.root-servers.net.", "192.58.128.30", "2001:503:c27::2:30"), 
-                              ("k.root-servers.net.", "193.0.14.129", "2001:7fd::1"), 
-                              ("l.root-servers.net.", "199.7.83.42", "2001:500:9f::42"), 
-                              ("m.root-servers.net.", "202.12.27.33", "2001:dc3::35")]
+                      ("a.root-servers.net.", "198.41.0.4", "2001:503:ba3e::2:30"),
+                      ("b.root-servers.net.", "199.9.14.201", "2001:500:200::b"),
+                      ("c.root-servers.net.", "192.33.4.12", "2001:500:2::c"),
+                      ("d.root-servers.net.", "199.7.91.13", "2001:500:2d::d"),
+                      ("e.root-servers.net.", "192.203.230.10", "2001:500:a8::e"),
+                      ("f.root-servers.net.", "192.5.5.241", "2001:500:2f::f"),
+                      ("g.root-servers.net.", "192.112.36.4", "2001:500:12::d0d"),
+                      ("h.root-servers.net.", "198.97.190.53", "2001:500:1::53"),
+                      ("i.root-servers.net.", "192.36.148.17", "2001:7fe::53"),
+                      ("j.root-servers.net.", "192.58.128.30", "2001:503:c27::2:30"),
+                      ("k.root-servers.net.", "193.0.14.129", "2001:7fd::1"),
+                      ("l.root-servers.net.", "199.7.83.42", "2001:500:9f::42"),
+                      ("m.root-servers.net.", "202.12.27.33", "2001:dc3::35")
+                      ]
+
+ROOT_SERVER_IP_DICT = l2d(ROOT_SERVER_IP_LIST)
 
 GOOGLE_DNS_SERVER_IP_LIST = ["8.8.8.8"]
+DEFAULT_REC_LIM = 30
+DEFAULT_CNAME_CHAIN_LIM = 8
+
+DNSResChain = namedtuple("DNSResChain", ["ns_chain", "full_ns_chain", 
+                                         "zonelist", "dnssec_chain", 
+                                         "answer_rrset"])
 
 
-def checkMatchedBackupResolver(res_chain):
-    return res_chain[-1][4]
-
-
-# def getAddressForHostname(name):
 def get_hostname_addr(name):
     return get_hostname_addr_from_res_chain(lookup_a_rec(name))
   
 
-# def getAddressForHostnameFromResultChain(res_chain):
 def get_hostname_addr_from_res_chain(res_chain):
 
-    answer_rr_set = res_chain[-1][5]
-    for i in answer_rr_set:
-        print(f'Element of the rr set: {i} (of type {type(i)})')
-    answer_rr = random.choice(answer_rr_set)
+    answer_rrset = res_chain[-1].answer_rrset
+    answer_rr = random.choice(answer_rrset)
     try:
         return answer_rr.address
     except AttributeError:
         raise ValueError("The given result chain does not have a valid address. May be a lookup for the wrong record type.", res_chain)
 
 
-def getAllAddressesForHostname(name):
-    return getAllAddressesForHostnameFromResultChain(lookup_a_rec(name))
+def get_all_hostname_addr(name):
+    return get_all_hostname_addr_from_res_chain(lookup_a_rec(name))
   
 
-def getAllAddressesForHostnameFromResultChain(res_chain):
-    answer_rr_set = res_chain[-1][5]
+def get_all_hostname_addr_from_res_chain(res_chain):
+    if res_chain is None:
+        return None
+    answer_rrset = res_chain[-1].answer_rrset
     res = []
     try:
-        for answer_rr in answer_rr_set:
+        for answer_rr in answer_rrset:
             res.append(answer_rr.address)
         return res
     except AttributeError:
@@ -70,7 +87,7 @@ def lookup_a_rec(name):
     return lookup_name(name, dns.rdatatype.A)
 
 
-def lookup_name(name, record_type, rec_limit=10, res_all_glueless=True, 
+def lookup_name(name, record_type, rec_limit=10, res_all_glueless=False, 
                 master_timeout=10):
     return lookup_name_rec(name, record_type, rec_limit, res_all_glueless, 
                            master_timeout)
@@ -87,8 +104,8 @@ def lookup_name_rec_cached(name, record, cname_chain_count, cache,
                            res_all_glueless, master_timeout, qry_start_time):
     return lookup_name_with_full_recursion(name, record, 
                                            cname_chain_count, cache, 
-                                           res_all_glueless, 30, 
-                                           master_timeout, qry_start_time)
+                                           master_timeout, qry_start_time,
+                                           res_all_glueless)
 
 
 def lookup_name_backup(name, record, master_timeout, qry_start_time):
@@ -102,157 +119,202 @@ def lookup_name_backup(name, record, master_timeout, qry_start_time):
         if time.time() - qry_start_time > master_timeout:
             raise ValueError("MasterTimeout for domain {}.".format(name))
         resp = backup_resolver.resolve(name, record).response
-        answer = resp.answer
-        return (resp, answer)
-    except dns.resolver.NoNameservers as nsError:
-        if "answered SERVFAIL" in nsError.msg:
+        return resp
+    except dns.resolver.NoNameservers as ns_error:
+        if "answered SERVFAIL" in ns_error.msg:
             raise ValueError(f"SERVFAIL for domain {name}. Likely invalid DNSSEC.")
         else:
             raise
-    except dns.resolver.NXDOMAIN as nsError:
+    except dns.resolver.NXDOMAIN as nxdomain_error:
         raise ValueError(f"NXDOMAIN for domain {name} in record type {record}.")
-    except dns.resolver.NoAnswer as nsError:
+    except dns.resolver.NoAnswer as noanswer_error:
         raise ValueError(f"NoAnswer for domain {name} in record type {record}.")
-    except dns.exception.Timeout as nsError:
+    except dns.exception.Timeout as timeout_error:
         raise ValueError(f"MasterTimeout for domain {name}.")
 
 
-def lookup_name_with_full_recursion(name, record, cname_chain_count, 
-                                    cache, res_all_glueless, 
-                                    rec_limit, master_timeout, qry_start_time):
+def get_dnssec_chain_count(lookup_res):
+    check = True
+    count = 0
+    for level in lookup_res.dnssec_chain:
+        count += (check and level)
+        check &= level
+    return count
 
-    #print(f"lookup for name {name} with record {record} and cache {cache.keys()}")
-    if rec_limit < 0:
-        raise ValueError("Recursed too much when performing query for domain {}.".format(name))
-    
+
+def perform_ip_lookup(name, cache, rec_limit, master_timeout, qry_start_time,
+                      res_all_glueless):
+    '''Returns: (list[DNSResChain], list[DNSResChain])'''
+    # Try the IPv4 lookup
+    lookupv4 = lookup_name_rec_helper(name, dns.rdatatype.A, cache, 
+                                      rec_limit, master_timeout, qry_start_time, res_all_glueless)
+    try:
+        lookupv6 = lookup_name_rec_helper(name, dns.rdatatype.AAAA, cache, 
+                                          rec_limit, master_timeout, qry_start_time, res_all_glueless)
+    except Exception:
+        # If the IPv6 lookup fails, we can simply put none and keep the nameserver record in place.
+        lookupv6 = None
+    return (lookupv4, lookupv6)
+
+
+def get_ip_from_lookup(res):
+    if isinstance(res[-1], DNSResChain):
+        return get_hostname_addr_from_res_chain(res)
+    else:
+        return res  # assuming a string
+
+
+def query_nameserver(name, record, ns_list, cache, rec_depth, master_timeout, qry_start_time,
+                     max_count=1):
+
+    failed_ns_dict = {}
+
+    ns_to_choose = l2d(ns_list)  
+    valid_ns = []
+
+    shuffled_keys = list(ns_to_choose.keys()) 
+    random.shuffle(shuffled_keys)  # randomize ns choice
+    c = 0
+    for ns_name in shuffled_keys:
+
+        ip_or_lookup, ip_or_lookupv6 = ns_to_choose[ns_name]
+        if ip_or_lookup is None:
+            # If there is a cyclic dependency, do not use record.
+            if (ns_name, dns.rdatatype.A) in cache and cache[(ns_name, dns.rdatatype.A)] is None:
+                # Case where there is a cycle in the dependency graph and the nameserver chosen is already being resolved.
+                failed_ns_dict[ns_name] = "Cyclic"
+            # Try a glueless lookup. If failed, do not use nameserver.
+            else:
+                try:
+                    ns_lookups = perform_ip_lookup(ns_name, cache, rec_depth - 1,
+                        master_timeout, qry_start_time, True)
+                    ns_to_choose[ns_name] = ns_lookups
+                    ip_or_lookup, ip_or_lookupv6 = ns_lookups
+                except ValueError:
+                    failed_ns_dict[ns_name] = "Glueless lookup failed"
+
+        if ip_or_lookup is not None:
+            msg = dns.message.make_query(name, record, want_dnssec=True)
+            try:
+                ns_ip = get_ip_from_lookup(ip_or_lookup)
+                (resp, is_tcp) = dns.query.udp_with_fallback(msg, ns_ip,
+                    timeout=4, source=None, ignore_trailing=True)
+                if len(resp.answer) == 0 and len(resp.authority) == 0:
+                    failed_ns_dict[ns_name] = "No answer or authority"
+                else:
+                    valid_ns.append((ns_name, ip_or_lookup, ip_or_lookupv6, resp))
+                    c += 1
+                    if c >= max_count:
+                        break
+            except dns.exception.Timeout:
+                failed_ns_dict[ns_name] = "Timeout"
+
+    if len(valid_ns) == 0:
+        raise ValueError(f"NoNameservers for domain {name}")
+
+    else:
+        return (ns_to_choose, valid_ns)
+
+
+def lookup_name_rec_helper(name, record, cache, 
+                           master_timeout, qry_start_time,
+                           rec_limit=DEFAULT_REC_LIM,
+                           res_all_glueless=True,
+                           cname_chain_count=DEFAULT_CNAME_CHAIN_LIM, 
+                           full_ns_list=ROOT_SERVER_IP_LIST.copy(),
+                           resolve_full_graph=False):
+
+    start = time.time()
+
     if (name, record) in cache:
         if cache[(name, record)] is None:
             raise ValueError("Cyclic name dependency not caught.")
         else:
-            entry = cache[(name, record)]
             return cache[(name, record)]
+
+    init_ns_chain = []
+    init_full_ns_chain = []
+    init_zonelist = ["."]
+    init_dnssec_chain = [True]
+    init_lkup = DNSResChain(init_ns_chain, init_full_ns_chain, init_zonelist, 
+                            init_dnssec_chain, None)
+    stack = [(init_lkup, full_ns_list.copy())]
 
     # Insert a lookup in progress token in the cache.
     cache[(name, record)] = None
 
-    backupResolverResponse, backupResolverAnswer = lookup_name_backup(name, record, master_timeout, qry_start_time)
-  
-    ns_list = []
-    full_ns_list = []
-    zonelist = ["."]
-    ns_name = ""
-    nameserver = ""
-    all_ns_lookup_ip_list = ROOT_SERVER_IP_LIST[:]
-    dnssec_count = 1  # assume root servers are DNSSEC enabled
-    dnssec_trust_chain = True
-    dnssec_valid = True
+    lookup_results = []
+    while len(stack) > 0:
+        # first step: choose a nameserver to query for the first level record
+        # store on stack: (dnslookup result obj, stack of nameservers to search)
+        lookup_res, ns_to_search = stack.pop()
+        full_ns_lvl, valid_ns_with_resp = query_nameserver(name, record, 
+                                              ns_to_search, cache, rec_limit, 
+                                              master_timeout, qry_start_time,
+                                              max_count=1)
+        full_ns = d2l(full_ns_lvl)
 
-    while True:
-        failed_ns_idx_list = []
-        response = ""
-        while True:
+        for (ns_name, ns, _, resp) in valid_ns_with_resp:
 
-            failed_nmsrvr_idx = [idx for (idx, _) in failed_ns_idx_list]
-            valid_idx = [_ for _ in range(len(all_ns_lookup_ip_list)) if _ not in failed_nmsrvr_idx]
+            has_dnssec = any([_.rdtype == dns.rdatatype.DS for _ in resp.authority])
+            new_dnssec_chain = lookup_res.dnssec_chain + [has_dnssec]
 
-            if len(valid_idx) == 0:
-                raise ValueError(f"NoNameservers for domain {name}")
-            ns_idx = random.choice(valid_idx)
-            (ns_name, ipOrLookup, ipOrLookupv6) = all_ns_lookup_ip_list[ns_idx]
-            if isinstance(ipOrLookup, str):
-                nameserver = ipOrLookup
-            elif ipOrLookup is None:
-                # If there is a cyclic dependency, do not use record.
-                if (ns_name, dns.rdatatype.A) in cache and cache[(ns_name, dns.rdatatype.A)] is None:
-                    # Case where there is a cycle in the dependency graph and the nameserver chosen is already being resolved.
-                    failed_ns_idx_list.append((ns_idx, "Cyclic"))
-                    continue
-                # Try a glueless lookup. If failed, do not use nameserver.
-                try:
-                    nsLookup = lookup_name_with_full_recursion(ns_name, dns.rdatatype.A, 8, cache, res_all_glueless, rec_limit - 1, master_timeout, qry_start_time)
-                    # Try the ipv6 lookup for recording purposes. If it fails, we can still use the ns but, leave the V6 info blank.
-                    try:
-                        nsLookupv6 = lookup_name_with_full_recursion(ns_name, dns.rdatatype.AAAA, 8, cache, res_all_glueless, rec_limit - 1, master_timeout, qry_start_time)
-                    except Exception:
-                        # No action needs to be taken if the ipv6 lookup of a glueless fails. Simply soft fail and continue with the IPv4 lookup.
-                        nsLookupv6 = None
-                    all_ns_lookup_ip_list[ns_idx] = (ns_name, nsLookup, nsLookupv6)
-                    nameserver = get_hostname_addr_from_res_chain(nsLookup)
-                except ValueError:
-                    failed_ns_idx_list.append((ns_idx, "Glueless lookup failed"))
-                    continue
-            else:
-                nameserver = get_hostname_addr_from_res_chain(ipOrLookup)
-            message = dns.message.make_query(name, record, want_dnssec=True)
-            try:
-                if time.time() - qry_start_time > master_timeout:
-                    raise ValueError("MasterTimeout for domain {}.".format(name))
-                # Returns a (dns.message.Message, tcp) tuple where tcp is True if and only if TCP was used. 
-                (response, tcp) = dns.query.udp_with_fallback(message, nameserver, timeout=4, source=None, ignore_trailing=True)
-            except dns.exception.Timeout:
-                failed_ns_idx_list.append((ns_idx, "Timeout"))
-                continue
-            if len(response.answer) == 0 and len(response.authority) == 0:
-                failed_ns_idx_list.append((ns_idx, "No answer or authority"))
-                continue
-            break
-        full_ns_list.append(all_ns_lookup_ip_list[:])
-        ns_list.append((ns_name, nameserver))
-        if dnssec_trust_chain:
-            nextLevelDNSSEC = any([_.rdtype == dns.rdatatype.DS for _ in response.authority])
-            if nextLevelDNSSEC:
-                dnssec_count += 1
-            else:
-                dnssec_trust_chain = False
+            # new_ns_chain = lookup_res.ns_chain + [(ns_name, ns)]
+            new_ns_chain = lookup_res.ns_chain + [(ns_name, get_ip_from_lookup(ns))]
+            new_full_ns_chain = lookup_res.full_ns_chain + [full_ns]
 
-        if response.answer != []:
-            # Some name servers will put DNSSEC info before the answer. It is important to actually check the rdtypes.
-            answerRRSetList = [a for a in response.answer if a.rdtype == record]
-            is_cname = False
+            # logic for cname/A/AAAA records
+            if len(resp.answer) > 0:
+                answer_rrset_list = [_ for _ in resp.answer if _.rdtype == record]
+                answer_cname_rrset = [_ for _ in resp.answer if _.rdtype == dns.rdatatype.CNAME]
+                is_cname = (len(answer_rrset_list) == 0) and (len(answer_cname_rrset) > 0)
 
-            if len(answerRRSetList) == 0:
-                answerRRSetList = [a for a in response.answer if a.rdtype == dns.rdatatype.CNAME]
-                if len(answerRRSetList) == 0:
+                if not is_cname and len(answer_rrset_list) == 0:
                     raise ValueError("NoAnswer and different response from backup resolver for domain {}".format(name))
-                is_cname = True
-            answerRRSet = answerRRSetList[0]
 
-            if is_cname:
-                if cname_chain_count == 0:
-                    raise ValueError("CNAME chain too long.")
+                answer_rrset = answer_rrset_list[0] if not is_cname else answer_cname_rrset[0]
+
+                if is_cname:
+                    if cname_chain_count == 0:
+                        raise ValueError("CNAME chain too long.")
+                    else:
+                        cname_lkup = []
+                        res = DNSResChain(new_ns_chain, new_full_ns_chain, 
+                                          lookup_res.zonelist, new_dnssec_chain,
+                                          answer_rrset)
+                        cname_lkup.append(res)
+
+                        for ans in answer_rrset:
+                            root_lookup = lookup_name_rec_helper(ans.target.to_text(), record,
+                                cache,
+                                master_timeout, qry_start_time,
+                                cname_chain_count - 1, cache, res_all_glueless)
+                            cname_lkup.extend(root_lookup)
+                        cache[(name, record)] = cname_lkup
+                        lookup_results.extend(cname_lkup)
                 else:
-                    res = [(ns_list, full_ns_list, zonelist, dnssec_count, answerRRSet == backupResolverAnswer[0], answerRRSet)]
-                    rec_lookup = lookup_name_rec_cached(random.choice(answerRRSet).target.to_text(), record, cname_chain_count - 1, cache, res_all_glueless, master_timeout, qry_start_time)
-                    res.extend(rec_lookup)
-                    cache[(name, record)] = res
-                    return res
-            res = [(ns_list, full_ns_list, zonelist, dnssec_count, answerRRSet == backupResolverAnswer[0], answerRRSet)]
-            cache[(name, record)] = res
-            return res
-        else:
-            ns_rr_sets = [a for a in response.authority if a.rdtype == dns.rdatatype.NS]
-            all_ns_list = []
-            if len(ns_rr_sets) == 0:
-                print(response.to_text())
-                print([a.to_text() for a in response.answer])
-                print([a.to_text() for a in response.authority])
-                print([a.to_text() for a in response.additional])
-                raise ValueError(f"No NS records for domain {name}.")
-            ns_group = ns_rr_sets[0]  # choice of nameserver
+                    res = DNSResChain(new_ns_chain, new_full_ns_chain, lookup_res.zonelist, new_dnssec_chain, answer_rrset)
+                    cache[(name, record)] = [res]
+                    lookup_results.append(res)
+    
+            # logic for authority records
+            else:
+                ns_rr_sets = [a for a in resp.authority if a.rdtype == dns.rdatatype.NS]
+                if len(ns_rr_sets) == 0:
+                    # print(resp.to_text())
+                    # print([a.to_text() for a in resp.answer])
+                    # print([a.to_text() for a in resp.authority])
+                    # print([a.to_text() for a in resp.additional])
+                    raise ValueError(f"NoAnswer and different response from backup resolver for domain {name}.")
+                ns_group = ns_rr_sets[0]  # choice of nameserver
 
-            zonelist.append(ns_group.name)
+                new_zonelist = lookup_res.zonelist + [ns_group.name]
 
-            # Iterate over start of authorities (e.g., com., edu.)
-            for ns in ns_group:
-                all_ns_list.append(ns.target.to_text())
-            glueless_ns_list = all_ns_list[:]
-            glued_ns_ip_dict = {}
-            for g in response.additional:
-                if (g.rdtype == dns.rdatatype.A) or (g.rdtype == dns.rdatatype.AAAA):
-                    if g.name.to_text() in all_ns_list:
-                        # If we found a glue record for a server, make sure it is removed from the glueless list.
-                        if g.name.to_text() in glueless_ns_list:
-                            glueless_ns_list.remove(g.name.to_text())
+                # Iterate over start of authorities (e.g., com., edu.)
+                all_ns_list = [ns.target.to_text() for ns in ns_group]
+                glued_ns_ip_dict = {}
+                for g in resp.additional:
+                    if ((g.rdtype == dns.rdatatype.A) or (g.rdtype == dns.rdatatype.AAAA)) and g.name.to_text() in all_ns_list:
                         # Iterate through listed addresses in the DNS response.
                         for ns_addr in g:
                             # If the nameserver is already in not already in the list of glued servers, add it with a blank IPv6 record.
@@ -267,190 +329,228 @@ def lookup_name_with_full_recursion(name, record, cname_chain_count,
                                 addr_v6 = ns_addr.address if (g.rdtype == dns.rdatatype.AAAA) else ipv6
                                 glued_ns_ip_dict[g.name.to_text()] = (addr_v4, addr_v6)
 
-            glueless_ns_lookup_dict = {}
-            if res_all_glueless:
-                for glueless_ns in glueless_ns_list:
-                    if (glueless_ns, dns.rdatatype.A) in cache and cache[(glueless_ns, dns.rdatatype.A)] is None:
-                        # This is the case where the glueless server is a cyclic dependency. Do not resolve this glueless server as it will cause a loop.
-                        glueless_ns_lookup_dict[glueless_ns] = (None, None)
-                    else:
-                        try:
-                            # Try the IPv4 lookup.
-                            lookupv4 = lookup_name_with_full_recursion(glueless_ns, dns.rdatatype.A, 8, cache, res_all_glueless, rec_limit - 1, master_timeout, qry_start_time)
+                glueless_ns_list = [_ for _ in all_ns_list if _ not in glued_ns_ip_dict]
+                glueless_ns_ip_dict = {}
+
+                if res_all_glueless:
+                    for glueless_ns in glueless_ns_list:
+                        if (glueless_ns, dns.rdatatype.A) in cache and cache[(glueless_ns, dns.rdatatype.A)] is None:
+                            # This is the case where the glueless server is a cyclic dependency. Do not resolve this glueless server as it will cause a loop.
+                            glueless_ns_ip_dict[glueless_ns] = (None, None)
+                        else:
                             try:
-                                lookupv6 = lookup_name_with_full_recursion(glueless_ns, dns.rdatatype.AAAA, 8, cache, res_all_glueless, rec_limit - 1, master_timeout, qry_start_time)
+                                # Try the IPv4 lookup.
+                                lookupv4, lookupv6 = perform_ip_lookup(glueless_ns, cache, rec_limit - 1, master_timeout,  qry_start_time, res_all_glueless)
+                                glueless_ns_ip_dict[glueless_ns] = (lookupv4, lookupv6)
                             except Exception:
-                                # If the IPv6 lookup fails, we can simply put none and keep the nameserver record in place.
-                                lookupv6 = None
-                            glueless_ns_lookup_dict[glueless_ns] = (lookupv4, lookupv6)
-                        except Exception:
-                            # If the IPv4 lookup fails, this is a busted nameserver and we should put in a no lookup result. Do not try IPv6 lookup since we cannot query it. I do not believe the nameserver selection code properly handles a glueless server with only an IPv6 lookup.
-                            glueless_ns_lookup_dict[glueless_ns] = (None, None)
-            else:
-                for glueless_ns in glueless_ns_list:
-                    glueless_ns_lookup_dict[glueless_ns] = (None, None)
-            all_ns_lookup_ip_list = [(k, v1, v2) for k, (v1, v2) in glued_ns_ip_dict.items()]
-            all_ns_lookup_ip_list.extend([(k, v1, v2) for k, (v1, v2) in glueless_ns_lookup_dict.items()])
+                                # If the IPv4 lookup fails, this is a busted nameserver and we should put in a no lookup result. Do not try IPv6 lookup since we cannot query it. I do not believe the nameserver selection code properly handles a glueless server with only an IPv6 lookup.
+                                glueless_ns_ip_dict[glueless_ns] = (None, None)
+                else:
+                    glueless_ns_ip_dict.update([(_, (None, None)) for _ in glueless_ns_list])
+                
+                new_ns_level = d2l(glued_ns_ip_dict) + d2l(glueless_ns_ip_dict)
+                interm_res = DNSResChain(new_ns_chain, new_full_ns_chain, new_zonelist,
+                    new_dnssec_chain, resp)
+
+                stack.append((interm_res, new_ns_level))
+
+    end = time.time()
+    # print(f'Total of {end - start:.4f} seconds to resolve {name}.')
+    return lookup_results
 
 
-def getFullDNSTargetIPList(lookup_result):
-    ipList = []
-    ipv6List = []
-    for cname_lookup in lookup_result:
-        dnssec_count = cname_lookup[3]
-        # completeNameServerLists = cnameLookup[1]
-        full_ns_lists = cname_lookup[1]
+def lookup_name_with_full_recursion(name, record, cname_chain_count, 
+                                    cache, 
+                                    master_timeout, qry_start_time,
+                                    res_all_glueless):
+
+    #print(f"lookup for name {name} with record {record} and cache {cache.keys()}")
+    backup_res_resp = lookup_name_backup(name, record, master_timeout, 
+                                         qry_start_time)
+
+    lookups = lookup_name_rec_helper(name, record, {}, master_timeout, 
+                                     qry_start_time)
+
+    is_path_dependent = all([_.answer_rrset != lookups[0].answer_rrset for _ in lookups])
+
+    results = []
+    for lkup in lookups:
+        results.append(lkup)
+
+    matches_backup = (backup_res_resp.answer[0] == lookups[-1].answer_rrset)
+
+    return (results, matches_backup)
+
+
+def get_full_dns_target_ip_list(lookup_result):
+
+    ip_list = []
+    ipv6_list = []
+
+    for cname_lkup in lookup_result:
+        dnssec_count = get_dnssec_chain_count(cname_lkup) # cname_lkup.dnssec_count
+        full_ns_lists = cname_lkup.full_ns_chain
         for zone_idx in range(dnssec_count, len(full_ns_lists)):
-            completeNameServerList = full_ns_lists[zone_idx]
-            for nsName, nsIPOrLookup, nsIPOrLookupV6 in completeNameServerList:
-                if isinstance(nsIPOrLookup, str):
-                    ipList.append(nsIPOrLookup)
-                elif nsIPOrLookup is not None:
-                    fullTargetIPList = getFullDNSTargetIPList(nsIPOrLookup)
-                    ipList.extend(fullTargetIPList[0])
-                    ipv6List.extend(fullTargetIPList[1])
+            all_ns_list = full_ns_lists[zone_idx]
+            for ns_name, ns_ip_lkup, ns_ip_lkupv6 in all_ns_list:
+                if isinstance(ns_ip_lkup, str):
+                    ip_list.append(ns_ip_lkup)
+                elif ns_ip_lkup is not None:
+                    trgt_ipv4, trgt_ipv6 = get_full_dns_target_ip_list(ns_ip_lkup)
+                    ip_list.extend(trgt_ipv4)
+                    ipv6_list.extend(trgt_ipv6)
 
-                if isinstance(nsIPOrLookupV6, str):
-                    ipv6List.append(nsIPOrLookupV6)
-                elif nsIPOrLookupV6 is not None:
-                    fullTargetIPList = getFullDNSTargetIPList(nsIPOrLookupV6)
-                    ipList.extend(fullTargetIPList[0])
-                    ipv6List.extend(fullTargetIPList[1])
+                if isinstance(ns_ip_lkupv6, str):
+                    ipv6_list.append(ns_ip_lkupv6)
+                elif ns_ip_lkupv6 is not None:
+                    trgt_ipv4, trgt_ipv6 = get_full_dns_target_ip_list(ns_ip_lkupv6)
+                    ip_list.extend(trgt_ipv4)
+                    ipv6_list.extend(trgt_ipv6)
               
-    return (list(set(ipList)), list(set(ipv6List)))
+    return (list(set(ip_list)), list(set(ipv6_list)))
 
-# This is the full list of IPs that could be hijacked.
-# Use this to calculate attack viability probability.
-# This function is deprecated. AAAA records need to be looked up in another lookup to support IPv6.
-def getFullTargetIPList(name, record, includeARecords):
-    if includeARecords:
+
+# Returns full list of IPs that could be hijacked.
+# Used to calculate attack viability probability.
+# Deprecated: AAAA records need to be looked up separately to support IPv6.
+def get_full_targ_ip_list(name, record, include_a_recs):
+    if include_a_recs:
         if record != dns.rdatatype.A:
             raise ValueError("Requested inclusion of A records in target IP list but query was for other record type.", record)
-        lookup_result = lookup_name(name, record)
-        (res, resv6) = getFullDNSTargetIPList(lookup_result)
-        res.extend(getAllAddressesForHostnameFromResultChain(lookup_result))
+        lookup_res = lookup_name(name, record)
+        (res, resv6) = get_full_dns_target_ip_list(lookup_res)
+        res.extend(get_all_hostname_addr_from_res_chain(lookup_res))
         return (list(set(res)), resv6)
     else:
-        return getFullDNSTargetIPList(lookup_name(name, record))
+        return get_full_dns_target_ip_list(lookup_name(name, record))
 
-#print(lookup_name("dnssec-failed.org", dns.rdatatype.A))
-#print(lookup_a_rec("cs.princeton.edu"))
 
-# This is the list of IPs that could be hijacked that the resolver actually contacted.
-# Use this to calculate false positive rates.
-def getPartialDNSTargetIPList(lookup_res):
+# Returns list of hijackable IPs that the resolver actually contacted.
+# Used to calculate false positive rates.
+def get_partial_dns_targ_ip_list(lookup_res):
     ip_list = []
-    for cname_lookup in lookup_res:
-        dnssec_count = cname_lookup[3]
-        nserver_list = cname_lookup[0]
-        for zoneIndex in range(dnssec_count, len(nserver_list)):
-            (ns_name, ns_ip) = nserver_list[zoneIndex]
+    for cname_lkup in lookup_res:
+        dnssec_count = get_dnssec_chain_count(cname_lkup) # cname_lookup.dnssec_count
+        nserver_list = cname_lkup.ns_chain
+        for zone_idx in range(dnssec_count, len(nserver_list)):
+            (ns_name, ns_ip) = nserver_list[zone_idx]
             ip_list.append(ns_ip)
     return (ip_list, [])
 
 
-def getPartialTargetIPList(name, record, includeARecords):
-    if includeARecords:
+def get_targ_partial_ip_list(name, record, include_a_rec):
+
+    if include_a_rec:
         if record != dns.rdatatype.A:
             raise ValueError("Requested inclusion of A records in target IP list but query was for other record type.", record)
-        lookupResult = lookup_name(name, record)
-        (res, resv6) = getPartialDNSTargetIPList(lookupResult)
-        res.append(get_hostname_addr_from_res_chain(lookupResult))
+        lookup_res = lookup_name(name, record)
+        (res, resv6) = get_partial_dns_targ_ip_list(lookup_res)
+        res.append(get_hostname_addr_from_res_chain(lookup_res))
         return (res, resv6)
     else:
-        return getPartialDNSTargetIPList(lookup_name(name, record))
+        return get_partial_dns_targ_ip_list(lookup_name(name, record))
 
 
-def performFullLookupForName(name):
-    aRecords = []
-    aaaaRecords = []
-    DNSTargetIPsv4 = []
-    DNSTargetIPsv6 = []
-    matchedBackupResolverv4 = False
-    matchedBackupResolverv6 = False
-    lookup4DNSIPsv4 = []
-    lookup4DNSIPsv6 = []
-    lookup6DNSIPsv4 = []
-    lookup6DNSIPsv6 = []
-    fullGraphv4 = False
-    fullGraphv6 = False
+def perform_full_name_lookup(name):
+    a_records = []
+    aaaa_records = []
+
+    dns_targ_ipv4 = []
+    dns_targ_ipv6 = []
+
+    match_backup_resv4 = False
+    match_backup_resv6 = False
+
+    lookup4_dns_ipv4 = []
+    lookup4_dns_ipv6 = []
+    lookup6_dns_ipv4 = []
+    lookup6_dns_ipv6 = []
+
+    full_graphv4 = False
+    full_graphv6 = False
+
+    lookupv4 = None
+    lookupv6 = None
+
     try:
-        lookupv4 = lookup_name(name, dns.rdatatype.A)
-        aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
-        (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
-        matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
-        fullGraphv4 = True
-    except ValueError as lookupError:
-        if "NoAnswer" in str(lookupError):
+        lookupv4, match_backup_resv4 = lookup_name(name, dns.rdatatype.A)
+        a_records = get_all_hostname_addr_from_res_chain(lookupv4)
+        (lookup4_dns_ipv4, lookup4_dns_ipv6) = get_full_dns_target_ip_list(lookupv4)
+        full_graphv4 = True
+    except ValueError as lookup_error:
+        if "NoAnswer" in str(lookup_error):
             # This case covers domains that have only an IPv6. 
             # These are not really errors since the domains are valid, but there is not associated IPv4 lookup data.
-            pass
-        elif "MasterTimeout" in str(lookupError):
+            if "different response from backup resolver" not in str(lookup_error):
+                match_backup_resv4 = True
+            full_graphv4 = True
+        elif "MasterTimeout" in str(lookup_error):
             # This is the case where a timeout is reached, 
             # to attempt to get a valid lookup, we can redo the lookup with resolve all gleuless as false.
             try:
-                lookupv4 = lookup_name(name, dns.rdatatype.A, res_all_glueless=False)
-                aRecords = getAllAddressesForHostnameFromResultChain(lookupv4)
-                (lookup4DNSIPsv4, lookup4DNSIPsv6) = getFullDNSTargetIPList(lookupv4)
-                matchedBackupResolverv4 = checkMatchedBackupResolver(lookupv4)
-            except ValueError as lookupError2:
-                if "NoAnswer" in str(lookupError2):
-                    pass
+                lookupv4, match_backup_resv4 = lookup_name(name, dns.rdatatype.A, res_all_glueless=False)
+                a_records = get_all_hostname_addr_from_res_chain(lookupv4)
+                (lookup4_dns_ipv4, lookup4_dns_ipv6) = get_full_dns_target_ip_list(lookupv4)
+            except ValueError as lookup_error2:
+                if "NoAnswer" in str(lookup_error2):
+                    if "different response from backup resolver" not in str(lookup_error2):
+                        match_backup_resv4 = True
                 else:
-                    raise lookupError2
+                    raise lookup_error2
         else:
-        # This is the case where the calling script needs to handle the error.
-            raise lookupError
+            # This is the case where the calling script needs to handle the error.
+            raise lookup_error
 
     try:
-        lookupv6 = lookup_name(name, dns.rdatatype.AAAA)
-        aaaaRecords = getAllAddressesForHostnameFromResultChain(lookupv6)
-        (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
-        matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
-        fullGraphv6 = True
-    except ValueError as lookupError:
-        if "NoAnswer" in str(lookupError):
-          # This case covers domains that have only an IPv4. 
+        lookupv6, match_backup_resv6 = lookup_name(name, dns.rdatatype.AAAA)
+        aaaa_records = get_all_hostname_addr_from_res_chain(lookupv6)
+        (lookup6_dns_ipv4, lookup6_dns_ipv6) = get_full_dns_target_ip_list(lookupv6)
+        full_graphv6 = True
+    except ValueError as lookup_error:
+        if "NoAnswer" in str(lookup_error) or "NXDOMAIN" in str(lookup_error):
+          # Case for domains that have only an IPv4. 
           # These are not really errors since the domains are valid.
-            pass
-        elif "MasterTimeout" in str(lookupError):
-        # This is the case where a timeout is reached, 
+            if "different response from backup resolver" not in str(lookup_error):
+                match_backup_resv6 = True
+            full_graphv6 = True
+        elif "MasterTimeout" in str(lookup_error):
+        # Case where a timeout is reached
         # to attempt to get a valid lookup, we can redo the lookup with resolve all glueless as false.
             try:
-                lookupv6 = lookup_name(name, dns.rdatatype.AAAA, res_all_glueless=False)
-                aaaaRecords = getAllAddressesForHostnameFromResultChain(lookupv6)
-                (lookup6DNSIPsv4, lookup6DNSIPsv6) = getFullDNSTargetIPList(lookupv6)
-                matchedBackupResolverv6 = checkMatchedBackupResolver(lookupv6)
-            except ValueError as lookupError2:
-                if "NoAnswer" in str(lookupError2):
-                    pass
+                lookupv6, match_backup_resv6 = lookup_name(name, dns.rdatatype.AAAA, res_all_glueless=False)
+                aaaa_records = get_all_hostname_addr_from_res_chain(lookupv6)
+                (lookup6_dns_ipv4, lookup6_dns_ipv6) = get_full_dns_target_ip_list(lookupv6)
+            except ValueError as lookup_error2:
+                if "NoAnswer" in str(lookup_error2):
+                    if "different response from backup resolver" not in str(lookup_error2):
+                        match_backup_resv6 = True
                 else:
-                    raise lookupError2
+                    raise lookup_error2
         else:
-            raise lookupError
+            raise lookup_error
 
-    DNSTargetIPsv4 = list(set(lookup4DNSIPsv4).union(set(lookup6DNSIPsv4)))
-    DNSTargetIPsv6 = list(set(lookup4DNSIPsv6).union(set(lookup6DNSIPsv6)))
+    dns_targ_ipv4 = list(set(lookup4_dns_ipv4).union(set(lookup6_dns_ipv4)))
+    dns_targ_ipv6 = list(set(lookup4_dns_ipv6).union(set(lookup6_dns_ipv6)))
   
-    return (aRecords, aaaaRecords, DNSTargetIPsv4, DNSTargetIPsv6, 
-            matchedBackupResolverv4, matchedBackupResolverv6, fullGraphv4, 
-            fullGraphv6)
+    return (a_records, aaaa_records, dns_targ_ipv4, dns_targ_ipv6, 
+            match_backup_resv4, match_backup_resv6, full_graphv4, 
+            full_graphv6, lookupv4, lookupv6)
 
 
 if __name__ == "__main__":
     domain = sys.argv[1]
-    print(getAllAddressesForHostname(domain))
+    print(get_all_hostname_addr(domain))
 
 
 # For now, All Let's Encrypt validation methods involve contacting and resolving an A record.
 # For no good reason, ietf.org is a glueless DNS lookup. It is not supported.
-#print(getFullTargetIPList("live.com", dns.rdatatype.A, False))
-#print(getAllAddressesForHostname("yahoo.com"))
+#print(get_full_targ_ip_list("live.com", dns.rdatatype.A, False))
+#print(get_all_hostname_addr("yahoo.com"))
 
 #print(get_hostname_addr_from_res_chain(lookup_a_rec("www.amazon.com")))
 #print([str(mx) for mx in lookup_name("yahoo.com", dns.rdatatype.MX)[0][5]])
 
 #print([str(caa) for caa in lookup_name("google.com", dns.rdatatype.CAA)[0][5]])  
 #print(lookup_a_rec("rogieoj49.fortynine.axc.nl"))
-#print(getFullTargetIPList("www.ietf.org", dns.rdatatype.A, False))
-#print(getPartialTargetIPList("www.amazon.com", dns.rdatatype.A, False))
+#print(get_full_targ_ip_list("www.ietf.org", dns.rdatatype.A, False))
+#print(get_targ_partial_ip_list("www.amazon.com", dns.rdatatype.A, False))
