@@ -56,7 +56,7 @@ def getAllAddressesForHostnameFromResultChain(resultChain):
 def lookupA(name):
   return lookupName(name, dns.rdatatype.A)
 
-def lookupName(name, record, recurssion_limit=10, resolve_all_gleuless=True, check_for_path_dependent_dns=False, master_timeout=100):
+def lookupName(name, record, recurssion_limit=10, resolve_all_gleuless=True, check_for_path_dependent_dns=True, master_timeout=100):
   #return lookupNameRecursive(name, record, 8, False, 3)
   return lookupNameRecursive(name, record, recurssion_limit, resolve_all_gleuless, check_for_path_dependent_dns, master_timeout)
 
@@ -103,8 +103,8 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   # USe Google DNS as backup resolver.
 
   # Use local bind as backup resolver for DNSSEC validation.
-  backupResolver.nameservers = ["127.0.0.1"]
-  #backupResolver.nameservers = ["8.8.8.8"]
+  #backupResolver.nameservers = ["127.0.0.1"]
+  backupResolver.nameservers = ["8.8.8.8"]
   backupResolverAnswer = None
   try:
     if time.time() - queryStartTime > masterTimeout:

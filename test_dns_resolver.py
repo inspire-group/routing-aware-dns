@@ -14,7 +14,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     # Domain list csv file.
     parser.add_argument("-d", "--domains",
-                        default="./top-1m.csv")
+                        default="./le-domains.csv")
     parser.add_argument("-e", "--errors",
                         default=f"./errors-{today.year}-{today.month}-{today.day} {today.hour}-{today.minute}-{today.second}.log")
     parser.add_argument("-r", "--results",
@@ -60,7 +60,11 @@ def main(args):
     if sline == "":
       continue
     splitLine = sline.split(",")
-    domain = splitLine[1]
+    domain = ""
+    if len(splitLine) > 1:
+      domain = splitLine[1]
+    else:
+      domain = splitLine[0]
     try:
       startTime = time.time()
       result = performFullLookupForName(domain)
