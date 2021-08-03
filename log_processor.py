@@ -5,28 +5,46 @@ import botocore
 import json
 import gzip
 import routing_aware_dns_resolver as dns_resolver
+import linecache
 from datetime import date
 import time
 import sys
 import logging
+import multiprocessing
+import os
+from threading import Lock
 
 # sample 1 in 1000 certificates
 # single thread with 10 second timeout per domain
 TODAY = date.today().strftime("%Y%m%d")
 BUCKET_NAME = "letsencryptdata"
 LOG_FILE = f'issuance.log.den-{TODAY}.gz'
-LOCAL_LOG_FILE = "local.log.gz"
+LOCAL_LOG_FILE = "local.log.test.gz"
 CRED_PROFILE = "dns_res"
 RES_FILE = f"lookup-results-{TODAY}.txt"
 LOGGER_FILE = f"log-{TODAY}.log"
 JSON_TAG = "JSON="
-MAX_COUNT = 10
+MAX_COUNT = 1000
+NUM_REPEAT_LKUPS = 3
 
 logging.basicConfig(filename=LOGGER_FILE, level=logging.DEBUG)
 logging.getLogger('boto3').setLevel(logging.CRITICAL)
 logging.getLogger('botocore').setLevel(logging.CRITICAL)
 logging.getLogger('s3transfer').setLevel(logging.CRITICAL)
 logging.getLogger('urllib3').setLevel(logging.CRITICAL)
+
+counter = multiprocessing.Value('i', 0)
+looked_up_cert_ids = {}
+cert_lock = Lock()
+
+
+def add_cert_to_dict(cert_id, pid):
+    cert_lock.acquire()
+    try:
+        looked_up_cert_ids[cert_id] = pid
+    finally:
+        cert_lock.release()
+
 
 def read_log_from_bucket(session, log_file):
     logging.info(f'Reading log from bucket {BUCKET_NAME}')
@@ -49,12 +67,18 @@ def read_log_from_bucket(session, log_file):
     logging.info(f'Took {(end - start):.4f} sec. to download log from S3')
 
 
+def process_file(name):
+    
+    pass
+
+
 def parse():
 
     cert_url_dict = {}
 
     start = time.time()
     with gzip.open(LOCAL_LOG_FILE) as f:
+        # linecount = sum(1 for line in f)
         for line in f:
             if len(cert_url_dict) >= MAX_COUNT:
                 break
@@ -72,6 +96,7 @@ def parse():
 
 def resolve_dns(cert_url_dict):
 
+    start1 = time.time()
     with open(RES_FILE, "a") as f:
 
         succ_timer = 0.
@@ -87,18 +112,23 @@ def resolve_dns(cert_url_dict):
             lookups = []
             for url in urls:
                 start = time.time()
-                try:
-                    lookup = dns_resolver.performFullLookupForName(url)
-                    end = time.time()
-                    succ_timer += (end - start)
-                    succ_lookups += 1
-                    lookups.append(lookup)
-                except Exception as e:
-                    end = time.time()
-                    failed_timer += (end - start)
-                    failed_lookups += 1
-                    logging.debug(f'Failed to resolve domain {url} for ID {id_}: {str(e)}')
-                    lookups.append(str(e))
+                url_lkups = []
+                for i in range(NUM_REPEAT_LKUPS):
+                    try:
+                        lookup = dns_resolver.perform_full_name_lookup(url)
+                        end = time.time()
+                        succ_timer += (end - start)
+                        succ_lookups += 1
+                        url_lkups.append(lookup)
+                        # lookups.append(lookup)
+                    except Exception as e:
+                        end = time.time()
+                        failed_timer += (end - start)
+                        failed_lookups += 1
+                        logging.debug(f'Failed to resolve domain {url} for ID {id_}: {str(e)}')
+                        url_lkups.append(str(e))
+                        # lookups.append(str(e))
+                lookups.append(url_lkups)
 
             lookup_json = {urls[i]: lookups[i] for i in range(len(urls))}
             res_json['Authorization_lookups'] = lookup_json
@@ -107,8 +137,19 @@ def resolve_dns(cert_url_dict):
     lookup_timer = succ_timer + failed_timer    
     logging.info(f'Total time: {lookup_timer:.4f} sec. performing lookups for {len(cert_url_dict)} certs.')
     logging.info(f'Total of {succ_lookups} successful ({succ_timer:.3f} sec.) and {failed_lookups} ({failed_timer:.3f} sec.) failed lookups.')
+    end1 = time.time()
+    print(f'Total lookup time: {(end1 - start1):.4f} sec')
     return results
 
+
+# multithreading steps:
+# 1. read all certs to a dict
+# 2. worker thread performs lookups
+# 3. worker thread writes lookup results to log
+
+def do_cert_lookup(cert):
+    pass
+    
 
 # one certificate per line: multiple domains (easier for certificate-level stats)
 # send output email 
@@ -126,6 +167,22 @@ def process_daily_log(args):
     lookup_res = resolve_dns(certs)
     logging.info('Successfuly performed DNS lookups')
     return 0
+
+
+def worker(in_q, out_q):
+    name = os.getpid()
+    while True:
+        item_cert = in_q.get()
+        if item_cert is None:
+            print(f'Worker {name} exiting: queue empty')
+            
+        lookup = resolve_dns(item_cert)
+
+
+def listener():
+    # listens for lookup messages on the queue and writes to file
+    global counter
+    pass
 
 
 if __name__ == '__main__':
