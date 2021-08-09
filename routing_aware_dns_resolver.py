@@ -87,7 +87,7 @@ def lookup_a_rec(name):
     return lookup_name(name, dns.rdatatype.A)
 
 
-def lookup_name(name, record_type, rec_limit=10, res_all_glueless=False, 
+def lookup_name(name, record_type, rec_limit=10, res_all_glueless=True, 
                 master_timeout=10):
     return lookup_name_rec(name, record_type, rec_limit, res_all_glueless, 
                            master_timeout)
@@ -379,7 +379,7 @@ def lookup_name_with_full_recursion(name, record, cname_chain_count,
 
     matches_backup = (backup_res_resp.answer[0] == lookups[-1].answer_rrset)
 
-    return (results, matches_backup)
+    return (results, matches_backup, backup_res_resp)
 
 
 def get_full_dns_target_ip_list(lookup_result):
@@ -452,6 +452,7 @@ def get_targ_partial_ip_list(name, record, include_a_rec):
 
 
 def perform_full_name_lookup(name):
+    lookup_dict = {}
     a_records = []
     aaaa_records = []
 
@@ -473,7 +474,7 @@ def perform_full_name_lookup(name):
     lookupv6 = None
 
     try:
-        lookupv4, match_backup_resv4 = lookup_name(name, dns.rdatatype.A)
+        lookupv4, match_backup_resv4, backup_resp_ipv4 = lookup_name(name, dns.rdatatype.A)
         a_records = get_all_hostname_addr_from_res_chain(lookupv4)
         (lookup4_dns_ipv4, lookup4_dns_ipv6) = get_full_dns_target_ip_list(lookupv4)
         full_graphv4 = True
@@ -488,7 +489,7 @@ def perform_full_name_lookup(name):
             # This is the case where a timeout is reached, 
             # to attempt to get a valid lookup, we can redo the lookup with resolve all gleuless as false.
             try:
-                lookupv4, match_backup_resv4 = lookup_name(name, dns.rdatatype.A, res_all_glueless=False)
+                lookupv4, match_backup_resv4, backup_resp_ipv4 = lookup_name(name, dns.rdatatype.A, res_all_glueless=False)
                 a_records = get_all_hostname_addr_from_res_chain(lookupv4)
                 (lookup4_dns_ipv4, lookup4_dns_ipv6) = get_full_dns_target_ip_list(lookupv4)
             except ValueError as lookup_error2:
@@ -502,7 +503,7 @@ def perform_full_name_lookup(name):
             raise lookup_error
 
     try:
-        lookupv6, match_backup_resv6 = lookup_name(name, dns.rdatatype.AAAA)
+        lookupv6, match_backup_resv6, backup_resp_ipv6 = lookup_name(name, dns.rdatatype.AAAA)
         aaaa_records = get_all_hostname_addr_from_res_chain(lookupv6)
         (lookup6_dns_ipv4, lookup6_dns_ipv6) = get_full_dns_target_ip_list(lookupv6)
         full_graphv6 = True
@@ -517,7 +518,7 @@ def perform_full_name_lookup(name):
         # Case where a timeout is reached
         # to attempt to get a valid lookup, we can redo the lookup with resolve all glueless as false.
             try:
-                lookupv6, match_backup_resv6 = lookup_name(name, dns.rdatatype.AAAA, res_all_glueless=False)
+                lookupv6, match_backup_resv6, backup_resp_ipv6 = lookup_name(name, dns.rdatatype.AAAA, res_all_glueless=False)
                 aaaa_records = get_all_hostname_addr_from_res_chain(lookupv6)
                 (lookup6_dns_ipv4, lookup6_dns_ipv6) = get_full_dns_target_ip_list(lookupv6)
             except ValueError as lookup_error2:
@@ -532,9 +533,20 @@ def perform_full_name_lookup(name):
     dns_targ_ipv4 = list(set(lookup4_dns_ipv4).union(set(lookup6_dns_ipv4)))
     dns_targ_ipv6 = list(set(lookup4_dns_ipv6).union(set(lookup6_dns_ipv6)))
   
-    return (a_records, aaaa_records, dns_targ_ipv4, dns_targ_ipv6, 
-            match_backup_resv4, match_backup_resv6, full_graphv4, 
-            full_graphv6, lookupv4, lookupv6)
+    lookup_dict["a_records"] = a_records
+    lookup_dict["aaaa_records"] = aaaa_records
+    lookup_dict["dns_targ_ipv4"] = dns_targ_ipv4
+    lookup_dict["dns_targ_ipv6"] = dns_targ_ipv6
+    lookup_dict["match_backup_resv4"] = match_backup_resv4
+    lookup_dict["match_backup_resv6"] = match_backup_resv6
+    lookup_dict["backup_resolver_resp_ipv4"] = backup_resp_ipv4
+    lookup_dict["backup_resolver_resp_ipv6"] = backup_resp_ipv6
+    lookup_dict["is_full_graphv4"] = full_graphv4
+    lookup_dict["is_full_graphv6"] = full_graphv6
+    lookup_dict["lookup_ipv4"] = lookupv4
+    lookup_dict["lookup_ipv6"] = lookupv6
+
+    return lookup_dict
 
 
 if __name__ == "__main__":
