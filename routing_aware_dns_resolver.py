@@ -115,8 +115,8 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   # USe Google DNS as backup resolver.
 
   # Use local bind as backup resolver for DNSSEC validation.
-  #backupResolver.nameservers = ["127.0.0.1"]
-  backupResolver.nameservers = ["8.8.8.8"]
+  backupResolver.nameservers = ["127.0.0.1"]
+  #backupResolver.nameservers = ["8.8.8.8"]
   backupResolverAnswer = None
   try:
     if time.time() - queryStartTime > masterTimeout:

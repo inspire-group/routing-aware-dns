@@ -75,19 +75,20 @@ def main(args):
       domain = splitLine[1]
     else:
       domain = splitLine[0]
-    try:
-      startTime = time.time()
-      result = performFullLookupForName(domain)
-      endTime = time.time()
-      latency = endTime - startTime
-      writeResult(f"Domain: {domain}, result: {result[0]}")
-      writeLatency(f"Domain: {domain}, latency: {latency}")
-      writeFullLookup(f"Domain: {domain}, full lookup: {result[1]}")
-    except ValueError as v:
-      writeError(f"Domain: {domain}, value error: {v}")
-    except Exception as e:
-      writeError(f"Domain: {domain}, other error: {e}")
-      #traceback.print_exc()
+    for i in range(10):
+      try:
+        startTime = time.time()
+        result = performFullLookupForName(domain)
+        endTime = time.time()
+        latency = endTime - startTime
+        writeResult(f"Domain: {domain}, result: {result[0]}")
+        writeLatency(f"Domain: {domain}, latency: {latency}")
+        writeFullLookup(f"Domain: {domain}, full lookup: {result[1]}")
+      except ValueError as v:
+        writeError(f"Domain: {domain}, value error: {v}")
+      except Exception as e:
+        writeError(f"Domain: {domain}, other error: {e}")
+        #traceback.print_exc()
     domainsResolved += 1
     print(f"Domains resolved: {domainsResolved}")
 
