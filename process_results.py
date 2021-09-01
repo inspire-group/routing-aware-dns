@@ -69,6 +69,8 @@ def main(args):
       fullGraphv6Count += 1
     if pathDependantv4 == True:
       pathDependantv4Count += 1
+      print(splitLine[0])
+      print("test")
     if pathDependantv6 == True:
       pathDependantv6Count += 1
 
