@@ -8,6 +8,7 @@ import dns.exception
 import random
 import time
 import sys
+import os
 from collections import namedtuple
 
 
@@ -43,7 +44,7 @@ ROOT_SERVER_IP_LIST = [
 
 ROOT_SERVER_IP_DICT = l2d(ROOT_SERVER_IP_LIST)
 
-GOOGLE_DNS_SERVER_IP_LIST = ["8.8.8.8"]
+GOOGLE_DNS_SERVER_IP_LIST = ["127.0.0.1"] # ["8.8.8.8"]
 DEFAULT_REC_LIM = 30
 DEFAULT_CNAME_CHAIN_LIM = 8
 
@@ -147,10 +148,12 @@ def perform_ip_lookup(name, cache, rec_limit, master_timeout, qry_start_time,
     '''Returns: (list[DNSResChain], list[DNSResChain])'''
     # Try the IPv4 lookup
     lookupv4 = lookup_name_rec_helper(name, dns.rdatatype.A, cache, 
-                                      rec_limit, master_timeout, qry_start_time, res_all_glueless)
+                                      master_timeout, qry_start_time,
+                                      rec_limit, res_all_glueless)
     try:
         lookupv6 = lookup_name_rec_helper(name, dns.rdatatype.AAAA, cache, 
-                                          rec_limit, master_timeout, qry_start_time, res_all_glueless)
+                                          master_timeout, qry_start_time,
+                                          rec_limit, res_all_glueless)
     except Exception:
         # If the IPv6 lookup fails, we can simply put none and keep the nameserver record in place.
         lookupv6 = None
@@ -248,6 +251,10 @@ def lookup_name_rec_helper(name, record, cache,
         # first step: choose a nameserver to query for the first level record
         # store on stack: (dnslookup result obj, stack of nameservers to search)
         lookup_res, ns_to_search = stack.pop()
+
+        time_elapsed = time.time() - qry_start_time
+        if (time_elapsed > master_timeout):
+            raise ValueError(f'MasterTimeout for domain {name} after {time_elapsed:.4f} seconds')
         full_ns_lvl, valid_ns_with_resp = query_nameserver(name, record, 
                                               ns_to_search, cache, rec_limit, 
                                               master_timeout, qry_start_time,
@@ -288,7 +295,7 @@ def lookup_name_rec_helper(name, record, cache,
                             root_lookup = lookup_name_rec_helper(ans.target.to_text(), record,
                                 cache,
                                 master_timeout, qry_start_time,
-                                cname_chain_count - 1, cache, res_all_glueless)
+                                cname_chain_count=cname_chain_count - 1, res_all_glueless=res_all_glueless)
                             cname_lkup.extend(root_lookup)
                         cache[(name, record)] = cname_lkup
                         lookup_results.extend(cname_lkup)
@@ -459,6 +466,9 @@ def perform_full_name_lookup(name):
     dns_targ_ipv4 = []
     dns_targ_ipv6 = []
 
+    backup_resp_ipv4 = None
+    backup_resp_ipv6 = None
+
     match_backup_resv4 = False
     match_backup_resv6 = False
 
@@ -509,14 +519,14 @@ def perform_full_name_lookup(name):
         full_graphv6 = True
     except ValueError as lookup_error:
         if "NoAnswer" in str(lookup_error) or "NXDOMAIN" in str(lookup_error):
-          # Case for domains that have only an IPv4. 
-          # These are not really errors since the domains are valid.
+            # Case for domains that have only an IPv4.
+            # These are not really errors since the domains are valid.
             if "different response from backup resolver" not in str(lookup_error):
                 match_backup_resv6 = True
             full_graphv6 = True
         elif "MasterTimeout" in str(lookup_error):
-        # Case where a timeout is reached
-        # to attempt to get a valid lookup, we can redo the lookup with resolve all glueless as false.
+            # Case where a timeout is reached
+            # to attempt to get a valid lookup, we can redo the lookup with resolve all glueless as false.
             try:
                 lookupv6, match_backup_resv6, backup_resp_ipv6 = lookup_name(name, dns.rdatatype.AAAA, res_all_glueless=False)
                 aaaa_records = get_all_hostname_addr_from_res_chain(lookupv6)

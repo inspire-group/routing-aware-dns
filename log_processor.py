@@ -6,27 +6,30 @@ import json
 import gzip
 import routing_aware_dns_resolver as dns_resolver
 import linecache
-from datetime import date
+from datetime import date, datetime
 import time
 import sys
 import logging
 import multiprocessing as mp
 import os
+from pathlib import Path
 
 # sample 1 in 1000 certificates
 # single thread with 10 second timeout per domain
 TODAY = date.today().strftime("%Y%m%d")
 DATA_BUCKET_NAME = "letsencryptdata"
 RES_BUCKET_NAME = "letsencryptdnsresults"
-LOG_FILE = "retry-issuance.log.den-20210507.gz" # f'issuance.log.den-{TODAY}.gz'
-LOCAL_LOG_FILE = "local.log.test.gz"
+LOG_FOLDER = "le_logs/"
+LOG_FILE = "den-issuance.log-20210830.gz"  # f'issuance.log.den-{TODAY}.gz'
 CRED_PROFILE = "dns_res"
+LOOKUP_FOLDER = "lookup_results/"
 RES_FILE = f"lookup-results-{TODAY}.txt"
 FULL_LKUP_FILE = f"lookups-archive-{TODAY}.gz"
 LOGGER_FILE = f"log-{TODAY}.log"
 JSON_TAG = "JSON="
-MAX_COUNT = 10
-NUM_REPEAT_LKUPS = 3
+MAX_COUNT = 10000
+NUM_REPEAT_LKUPS = 10
+NUM_TASKS = 10
 
 logging.basicConfig(filename=LOGGER_FILE, level=logging.DEBUG)
 logging.getLogger('boto3').setLevel(logging.CRITICAL)
@@ -44,7 +47,8 @@ def read_log_from_bucket(session, log_file):
     bucket = s3.Bucket(DATA_BUCKET_NAME)
 
     try:
-        bucket.download_file(log_file, LOCAL_LOG_FILE)
+        if not Path(LOG_FOLDER + log_file).is_file():
+            bucket.download_file(log_file, LOG_FOLDER + log_file)
     except botocore.exceptions.ClientError as e:
         if e.response['Error']['Code'] == '404':
             # TODO: implement some notification mechanism to put here
@@ -77,23 +81,24 @@ def write_logs_to_bucket(session):
 
 '''Returns a dictionary (cert ID: URLs) of max size cert_count.
 '''
-def parse(manager, cert_count):
+def parse(log_file, cert_count, manager=None):
 
     out_q = manager.Queue()
     certs_seen = set()
     start = time.time()
-    with gzip.open(LOCAL_LOG_FILE) as f:
+    with gzip.open(LOG_FOLDER + log_file) as f:
         # linecount = sum(1 for line in f)
         for line in f:
             if len(certs_seen) >= cert_count:
                 break
             l = line.decode()
+            le_ts = l[:l.index(" ")]
             cert_log = json.loads(l[l.index(JSON_TAG)+len(JSON_TAG):])
             urls = list(cert_log['Authorizations'].keys())
             id_code = cert_log['ID']
-            if id_code not in certs_seen: # many duplicate lines in logs
+            if id_code not in certs_seen:  # sometimes duplicate lines in logs
                 certs_seen.add(id_code)
-                out_q.put((id_code, urls))
+                out_q.put((id_code, urls, le_ts))
 
     stop = time.time()
     logging.info(f'Parsed {len(certs_seen)} unique certs from log in {(stop - start):.4f} seconds.')
@@ -117,11 +122,11 @@ def process_daily_log(args):
 
     print(f'Performing lookups for log file {log_file}')
     logging.info(f'Performing lookups for log file {log_file}')
-    session = boto3.Session(profile_name=CRED_PROFILE)
+    session = boto3.Session()
     m = mp.Manager()  # TODO: enable multiprocessing with a flag
 
     read_log_from_bucket(session, log_file)
-    certs = parse(m, MAX_COUNT)
+    certs = parse(log_file, MAX_COUNT, m)
     lookup_res = resolve_dns(m, certs)
     write_logs_to_bucket(session)
     logging.info('Successfuly logged DNS lookups.')
@@ -132,30 +137,30 @@ def get_lookups(id_, urls):
 
     successful = 0
     failed = 0
-    lookups = []
-    for url in urls:
-        domain_lookups = []
-        for iter in range(NUM_REPEAT_LKUPS):
-            try:
-                lookup = dns_resolver.perform_full_name_lookup(url)
-                domain_lookups.append(lookup)
-                successful += 1
-            except Exception as e:
-                print(f'Failed to resolve domain {url} for ID {id_}: {str(e)}')
-                logging.debug(f'Failed to resolve domain {url} for ID {id_}: {str(e)}')
-                domain_lookups.append(str(e))
-                failed += 1
-            
-        lookups.append(domain_lookups)
 
     summary = {}
     full_lkups = {}
-    for i in range(len(lookups)):
-        url_lkup = lookups[i]
-        ipv4_lkup = [_.pop("lookup_ipv4") if isinstance(_, dict) else _ for _ in url_lkup]
-        ipv6_lkup = [_.pop("lookup_ipv6") if isinstance(_, dict) else _ for _ in url_lkup]
-        summary[urls[i]] = url_lkup
-        full_lkups[urls[i]] = (ipv4_lkup, ipv6_lkup)
+    for url in urls:
+        domain_full_lookups = []
+        domain_smry = []
+        for iter in range(NUM_REPEAT_LKUPS):
+            lookup_ts = str(datetime.now().astimezone())
+            try:
+                lookup = dns_resolver.perform_full_name_lookup(url)
+                ipv4_lkup = lookup.pop("lookup_ipv4")
+                ipv6_lkup = lookup.pop("lookup_ipv6")
+                domain_full_lookups.append((lookup_ts, ipv4_lkup, ipv6_lkup))
+                domain_smry.append((lookup_ts, lookup))
+                successful += 1
+            except Exception as e:
+                # print(f'Failed to resolve domain {url} for ID {id_}: {str(e)}')
+                logging.debug(f'Failed to resolve domain {url} for ID {id_}: {str(e)}')
+                domain_full_lookups.append((lookup_ts, str(e)))
+                domain_smry.append((lookup_ts, str(e)))
+                failed += 1
+            
+        summary[url] = domain_smry
+        full_lkups[url] = domain_full_lookups
 
     lookup_result = {"ID": id_, "summary": summary, "full": full_lkups}
     return (lookup_result, successful, failed)
@@ -175,11 +180,11 @@ def worker(in_q, out_q):
         if cert is None:
             print(f'Worker {name} exiting: queue empty')
             break
-        cert_id, cert_urls = cert
+        cert_id, cert_urls, le_ts = cert
         lookup, succ_lkup, fail_lkup = get_lookups(cert_id, cert_urls)
         successful += succ_lkup
         failed += fail_lkup
-        out_q.put(lookup)
+        out_q.put((lookup, le_ts))
         lookups_done.append(lookup)
         in_q.task_done()
     end = time.time()
@@ -189,25 +194,35 @@ def worker(in_q, out_q):
 
 def listener(write_q):
     # listens for lookup messages on the queue and writes to file
+    counter = 0
     with open(RES_FILE, "a") as f, gzip.open(FULL_LKUP_FILE, "wb") as f2:
         finished = False
         while not finished:
             print('listening...')
             msg = write_q.get()
-            if msg == 'end': # all done!
+            if msg == 'end':  # all done!
                 f.close()
                 finished = True
                 write_q.task_done()
-                # break
             else:
-                lookup = msg
-                stats = {"ID": lookup["ID"], "summary": lookup["summary"]}
-                full_graph = {"ID": lookup["ID"], "full": lookup["full"]}
-                f.write(str(stats) + '\n')
+                lookup, le_ts = msg
+                stats = {"ID": lookup["ID"], "le_ts": le_ts, "summary": lookup["summary"]}
+                for d in stats["summary"]:
+                    attempt = stats["summary"][d]
+                    for a in attempt:
+                        lookup_ipv4 = a[1]["backup_resolver_resp_ipv4"]
+                        lookup_ipv6 = a[1]["backup_resolver_resp_ipv6"]
+                        a[1]["backup_resolver_resp_ipv4"] = str(lookup_ipv4)
+                        a[1]["backup_resolver_resp_ipv6"] = str(lookup_ipv6)
+                full_graph = {"ID": lookup["ID"], "le_ts": le_ts, "full": lookup["full"]}
+                f.write(json.dumps(stats) + '\n')
                 f.flush()
                 f2.write((str(full_graph) + '\n').encode())
-                f2.flush()             
+                f2.flush()
+                counter += 1
                 write_q.task_done()
+                if (counter % 10) == 0:
+                    print(f'Recorded {counter} cert lookups so far.')
 
 
 def resolve_dns(manager, cert_q):
@@ -221,7 +236,7 @@ def resolve_dns(manager, cert_q):
     pool = mp.Pool(max_proc)
 
     watcher = pool.apply_async(listener, (lookup_q,))
-    num_tasks = 10  # roughly do 10 lookups a task
+    num_tasks = NUM_TASKS  # divide lookups into 10 tasks
 
     for i in range(num_tasks):
         cert_q.put(None)  # sentinel
