@@ -47,8 +47,8 @@ def read_log_from_bucket(session, log_file):
     bucket = s3.Bucket(DATA_BUCKET_NAME)
 
     try:
-        if not Path(LOG_FOLDER + log_file).is_file():
-            bucket.download_file(log_file, LOG_FOLDER + log_file)
+        if not Path(log_file).is_file():
+            bucket.download_file(log_file, log_file)
     except botocore.exceptions.ClientError as e:
         if e.response['Error']['Code'] == '404':
             # TODO: implement some notification mechanism to put here
@@ -87,7 +87,7 @@ def parse(log_file, cert_count):
     certs_seen = set()
     start = time.time()
 
-    with gzip.open(LOG_FOLDER + log_file) as f:
+    with gzip.open(log_file) as f:
         for line in f:
             if len(certs_seen) >= cert_count:
                 break
@@ -212,7 +212,6 @@ def listener(write_q):
                 pickle.dump(full_graph, archive_f, pickle.HIGHEST_PROTOCOL)
                 archive_f.flush()
                 counter += 1
-                print(f'Wrote a line: at count {counter}')
                 write_q.task_done()
                 if (counter % 10) == 0:
                     print(f'Recorded {counter} cert lookups so far.')
@@ -227,7 +226,7 @@ def resolve_dns(manager, cert_q):
 
     start = time.time()
 
-    max_proc = mp.cpu_count()
+    max_proc = mp.cpu_count() + 2
 
     pool = mp.Pool(max_proc)
     lookup_q = manager.Queue()
@@ -245,7 +244,6 @@ def resolve_dns(manager, cert_q):
         all_lookups.append(job.get())
 
     lookups_success, lookups_failed = [sum(i) for i in zip(*all_lookups)]
-    print('All workers completed')
 
     lookup_q.put('end')
     watcher.get()
