@@ -44,7 +44,7 @@ ROOT_SERVER_IP_LIST = [
 
 ROOT_SERVER_IP_DICT = l2d(ROOT_SERVER_IP_LIST)
 
-GOOGLE_DNS_SERVER_IP_LIST = ["127.0.0.1"] # ["8.8.8.8"]
+BACKUP_RESOLVER_IP_LIST = ["127.0.0.1"]
 DEFAULT_REC_LIM = 30
 DEFAULT_CNAME_CHAIN_LIM = 8
 
@@ -114,11 +114,11 @@ def lookup_name_backup(name, record, master_timeout, qry_start_time):
     backup_resolver = dns.resolver.Resolver()
     backup_resolver.timeout = master_timeout
     backup_resolver.lifetime = master_timeout
-    backup_resolver.nameservers = GOOGLE_DNS_SERVER_IP_LIST  # Use Google DNS as backup resolver.
+    backup_resolver.nameservers = BACKUP_RESOLVER_IP_LIST  # Use localhost (unbound) as backup resolver.
 
     try:
         if time.time() - qry_start_time > master_timeout:
-            raise ValueError("MasterTimeout for domain {}.".format(name))
+            raise ValueError("MasterTimeout for domain {} in backup resolver lookup.".format(name))
         resp = backup_resolver.resolve(name, record).response
         return resp
     except dns.resolver.NoNameservers as ns_error:
@@ -131,7 +131,7 @@ def lookup_name_backup(name, record, master_timeout, qry_start_time):
     except dns.resolver.NoAnswer as noanswer_error:
         raise ValueError(f"NoAnswer for domain {name} in record type {record}.")
     except dns.exception.Timeout as timeout_error:
-        raise ValueError(f"MasterTimeout for domain {name}.")
+        raise ValueError(f"MasterTimeout for domain {name} in backup resolver lookup.")
 
 
 def get_dnssec_chain_count(lookup_res):
