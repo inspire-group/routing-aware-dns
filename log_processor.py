@@ -2,18 +2,19 @@
 
 import boto3
 import botocore
-import json
-import gzip
-import routing_aware_dns_resolver as dns_resolver
-import linecache
 from datetime import date, datetime
-import time
-import sys
-import logging
-import pickle
+import gzip
+import json
+import linecache
 import multiprocessing as mp
 import os
 from pathlib import Path
+import pickle
+from random import Random
+import routing_aware_dns_resolver as dns_resolver
+import sys
+import time
+import logging
 
 # sample 1 in 1000 certificates
 # single thread with 10 second timeout per domain
@@ -22,7 +23,6 @@ DATA_BUCKET_NAME = "letsencryptdata"
 RES_BUCKET_NAME = "letsencryptdnsresults"
 LOG_FOLDER = "le_logs/"
 LOG_FILE = "den-issuance.log-20210829.gz"  # f'issuance.log.den-{TODAY}.gz'
-CRED_PROFILE = "dns_res"
 LOOKUP_FOLDER = "lookup_results/"
 RES_FILE = f"lookup-results-{TODAY}.txt"
 FULL_LKUP_FILE = f"lookups-archive-{TODAY}.gz"
@@ -31,7 +31,10 @@ JSON_TAG = "JSON="
 MAX_COUNT = 10000
 NUM_REPEAT_LKUPS = 10
 
-logging.basicConfig(filename=LOGGER_FILE, level=logging.DEBUG)
+logging.basicConfig(filename=LOGGER_FILE,
+                    format='%(asctime)s %(levelname)-8s %(message)s',
+                    level=logging.DEBUG,
+                    datefmt='%Y-%m-%d %H:%M:%S')
 logging.getLogger('boto3').setLevel(logging.CRITICAL)
 logging.getLogger('botocore').setLevel(logging.CRITICAL)
 logging.getLogger('s3transfer').setLevel(logging.CRITICAL)
@@ -87,18 +90,28 @@ def parse(log_file, cert_count):
     certs_seen = set()
     start = time.time()
 
+    num_lines = sum(1 for line in gzip.open(log_file))
+    # use ordinal date as seed to coordinate samples across servers
+    dateseed = date.today().toordinal()
+    rand_gen = Random(Random(dateseed).random())
+    rand_line_sample = rand_gen.sample(range(num_lines), cert_count)
+
+    print(f'sampling lines {rand_line_sample} from the file (total number of lines: {num_lines}')
     with gzip.open(log_file) as f:
+        line_ctr = 0
         for line in f:
-            if len(certs_seen) >= cert_count:
-                break
-            l = line.decode()
-            le_ts = l[:l.index(" ")]
-            cert_log = json.loads(l[l.index(JSON_TAG)+len(JSON_TAG):])
-            urls = list(cert_log['Authorizations'].keys())
-            id_code = cert_log['ID']
-            if id_code not in certs_seen:  # sometimes duplicate lines in logs
-                certs_seen.add(id_code)
-                out_q.append((id_code, urls, le_ts))
+            if line_ctr in rand_line_sample:
+            # if len(certs_seen) >= cert_count:
+            #     break
+                l = line.decode()
+                le_ts = l[:l.index(" ")]
+                cert_log = json.loads(l[l.index(JSON_TAG)+len(JSON_TAG):])
+                urls = list(cert_log['Authorizations'].keys())
+                id_code = cert_log['ID']
+                if id_code not in certs_seen:  # sometimes duplicate lines in logs
+                    certs_seen.add(id_code)
+                    out_q.append((id_code, urls, le_ts))
+            line_ctr += 1
 
     stop = time.time()
     logging.info(f'Parsed {len(certs_seen)} unique certs from log in {(stop - start):.4f} seconds.')
@@ -144,20 +157,28 @@ def get_lookups(id_, urls):
         domain_full_lookups = []
         domain_smry = []
         for iter in range(NUM_REPEAT_LKUPS):
-            lookup_ts = str(datetime.now().astimezone())
+            start = datetime.now()
+            lookup_ts = str(start.astimezone())
             try:
                 lookup = dns_resolver.perform_full_name_lookup(url)
+                end = datetime.now()
                 ipv4_lkup = lookup.pop("lookup_ipv4")
                 ipv6_lkup = lookup.pop("lookup_ipv6")
                 backup_resp_ipv4 = lookup.pop("backup_resolver_resp_ipv4")
                 backup_resp_ipv6 = lookup.pop("backup_resolver_resp_ipv6")
-                domain_full_lookups.append((lookup_ts, ipv4_lkup, ipv6_lkup, 
-                    backup_resp_ipv4, backup_resp_ipv6))
+                domain_full_lookups.append((lookup_ts, 
+                                            ipv4_lkup, 
+                                            ipv6_lkup, 
+                                            backup_resp_ipv4, 
+                                            backup_resp_ipv6))
                 domain_smry.append((lookup_ts, lookup))
                 successful += 1
+                exec_time = end - start
+                logging.debug(f'Completed a lookup for domain {url} (cert ID {id_}) in {exec_time.seconds}.{exec_time.microseconds} seconds.')
             except Exception as e:
-                print(f'Failed to resolve domain {url} for ID {id_}: {str(e)}')
-                logging.debug(f'Failed to resolve domain {url} for ID {id_}: {str(e)}')
+                end = datetime.now()
+                exec_time = end - start
+                logging.debug(f'Failed to resolve domain {url} for ID {id_}: {str(e)} (took {exec_time.seconds}.{exec_time.microseconds} seconds.)')
                 domain_full_lookups.append((lookup_ts, str(e)))
                 domain_smry.append((lookup_ts, str(e)))
                 failed += 1
