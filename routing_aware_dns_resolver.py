@@ -115,8 +115,8 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
   # USe Google DNS as backup resolver.
 
   # Use local bind as backup resolver for DNSSEC validation.
-  backupResolver.nameservers = ["127.0.0.1"]
-  #backupResolver.nameservers = ["8.8.8.8"]
+  #backupResolver.nameservers = ["127.0.0.1"]
+  backupResolver.nameservers = ["8.8.8.8"]
   backupResolverAnswer = None
   try:
     if time.time() - queryStartTime > masterTimeout:
@@ -286,7 +286,7 @@ def lookupNameRecursiveWithFullRecursionLimit(name, record, cnameChainsToFollow,
             for nsAddress in g:
               # If the nameserver is already in not already in the list of glued servers, add it with a blank IPv6 record.
               if g.name.to_text() not in [t[0] for t in listOfGluedNameServersAndIPs]:
-                listOfGluedNameServersAndIPs.append((g.name.to_text(), nsAddress.address, None))
+                listOfGluedNameServersAndIPs.append((g.name.to_text(), nsAddress.address, None)) # This line appears to only add one glue record. If there are multiple glued A records, we need to list them all as target IPs.
               else:
                 # Else it might already be listed with an IPv6 record, iterate through the list, find the index and update the IPv4 record.
                 for i in range(len(listOfGluedNameServersAndIPs)):
@@ -360,6 +360,7 @@ def getFullDNSTargetIPList(lookupResult):
               fullTargetIPList = getFullDNSTargetIPList(nsIPOrLookup)
               ipList.extend(fullTargetIPList[0])
               ipv6List.extend(fullTargetIPList[1])
+              ipList.extend(getAllAddressesForHostnameFromResultChain(nsIPOrLookup)) # This is the IPv4 version of the lookup, so only append the resulting IPv4 A records.
 
             if isinstance(nsIPOrLookupV6, str):
               ipv6List.append(nsIPOrLookupV6)
@@ -367,6 +368,7 @@ def getFullDNSTargetIPList(lookupResult):
               fullTargetIPList = getFullDNSTargetIPList(nsIPOrLookupV6)
               ipList.extend(fullTargetIPList[0])
               ipv6List.extend(fullTargetIPList[1])
+              ipv6List.extend(getAllAddressesForHostnameFromResultChain(nsIPOrLookupV6))
               
   return (list(set(ipList)),list(set(ipv6List)))
 
