@@ -44,7 +44,7 @@ ROOT_SERVER_IP_LIST = [
 
 ROOT_SERVER_IP_DICT = l2d(ROOT_SERVER_IP_LIST)
 
-BACKUP_RESOLVER_IP_LIST = ["127.0.0.1"]
+BACKUP_RESOLVER_IP_LIST = ["8.8.8.8"]#["127.0.0.1"]
 DEFAULT_REC_LIM = 30
 DEFAULT_CNAME_CHAIN_LIM = 8
 
@@ -72,8 +72,8 @@ def get_all_hostname_addr(name):
   
 
 def get_all_hostname_addr_from_res_chain(res_chain):
-    if res_chain is None:
-        return None
+    if res_chain is None or len(res_chain) == 0:
+        return []
     answer_rrset = res_chain[-1].answer_rrset
     res = []
     try:
@@ -400,19 +400,21 @@ def get_full_dns_target_ip_list(lookup_result):
         for zone_idx in range(dnssec_count, len(full_ns_lists)):
             all_ns_list = full_ns_lists[zone_idx]
             for ns_name, ns_ip_lkup, ns_ip_lkupv6 in all_ns_list:
-                if isinstance(ns_ip_lkup, str):
+                if isinstance(ns_ip_lkup, str): # These lines will have to be updated to support multiple glued A records properly.
                     ip_list.append(ns_ip_lkup)
                 elif ns_ip_lkup is not None:
                     trgt_ipv4, trgt_ipv6 = get_full_dns_target_ip_list(ns_ip_lkup)
                     ip_list.extend(trgt_ipv4)
                     ipv6_list.extend(trgt_ipv6)
+                    ip_list.extend(get_all_hostname_addr_from_res_chain(ns_ip_lkup))
 
-                if isinstance(ns_ip_lkupv6, str):
+                if isinstance(ns_ip_lkupv6, str): # These lines will have to be updated to support multiple glued AAAA records properly.
                     ipv6_list.append(ns_ip_lkupv6)
                 elif ns_ip_lkupv6 is not None:
                     trgt_ipv4, trgt_ipv6 = get_full_dns_target_ip_list(ns_ip_lkupv6)
                     ip_list.extend(trgt_ipv4)
                     ipv6_list.extend(trgt_ipv6)
+                    ipv6_list.extend(get_all_hostname_addr_from_res_chain(ns_ip_lkupv6))
               
     return (list(set(ip_list)), list(set(ipv6_list)))
 
