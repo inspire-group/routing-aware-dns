@@ -27,24 +27,24 @@ def d2l(ns_dict):
 
 
 ROOT_SERVER_IP_LIST = [
-                      ("a.root-servers.net.", "198.41.0.4", "2001:503:ba3e::2:30"),
-                      ("b.root-servers.net.", "199.9.14.201", "2001:500:200::b"),
-                      ("c.root-servers.net.", "192.33.4.12", "2001:500:2::c"),
-                      ("d.root-servers.net.", "199.7.91.13", "2001:500:2d::d"),
-                      ("e.root-servers.net.", "192.203.230.10", "2001:500:a8::e"),
-                      ("f.root-servers.net.", "192.5.5.241", "2001:500:2f::f"),
-                      ("g.root-servers.net.", "192.112.36.4", "2001:500:12::d0d"),
-                      ("h.root-servers.net.", "198.97.190.53", "2001:500:1::53"),
-                      ("i.root-servers.net.", "192.36.148.17", "2001:7fe::53"),
-                      ("j.root-servers.net.", "192.58.128.30", "2001:503:c27::2:30"),
-                      ("k.root-servers.net.", "193.0.14.129", "2001:7fd::1"),
-                      ("l.root-servers.net.", "199.7.83.42", "2001:500:9f::42"),
-                      ("m.root-servers.net.", "202.12.27.33", "2001:dc3::35")
+                      ("a.root-servers.net.", ["198.41.0.4"], ["2001:503:ba3e::2:30"]),
+                      ("b.root-servers.net.", ["199.9.14.201"], ["2001:500:200::b"]),
+                      ("c.root-servers.net.", ["192.33.4.12"], ["2001:500:2::c"]),
+                      ("d.root-servers.net.", ["199.7.91.13"], ["2001:500:2d::d"]),
+                      ("e.root-servers.net.", ["192.203.230.10"], ["2001:500:a8::e"]),
+                      ("f.root-servers.net.", ["192.5.5.241"], ["2001:500:2f::f"]),
+                      ("g.root-servers.net.", ["192.112.36.4"], ["2001:500:12::d0d"]),
+                      ("h.root-servers.net.", ["198.97.190.53"], ["2001:500:1::53"]),
+                      ("i.root-servers.net.", ["192.36.148.17"], ["2001:7fe::53"]),
+                      ("j.root-servers.net.", ["192.58.128.30"], ["2001:503:c27::2:30"]),
+                      ("k.root-servers.net.", ["193.0.14.129"], ["2001:7fd::1"]),
+                      ("l.root-servers.net.", ["199.7.83.42"], ["2001:500:9f::42"]),
+                      ("m.root-servers.net.", ["202.12.27.33"], ["2001:dc3::35"])
                       ]
 
 ROOT_SERVER_IP_DICT = l2d(ROOT_SERVER_IP_LIST)
 
-BACKUP_RESOLVER_IP_LIST = ["8.8.8.8"]#["127.0.0.1"]
+BACKUP_RESOLVER_IP_LIST = ["127.0.0.1"]#["8.8.8.8"]
 DEFAULT_REC_LIM = 30
 DEFAULT_CNAME_CHAIN_LIM = 8
 
@@ -161,10 +161,12 @@ def perform_ip_lookup(name, cache, rec_limit, master_timeout, qry_start_time,
 
 
 def get_ip_from_lookup(res):
+    if len(res) == 0:
+        return None
     if isinstance(res[-1], DNSResChain):
         return get_hostname_addr_from_res_chain(res)
     else:
-        return res  # assuming a string
+        return random.choice(res)  # assuming res is a list of strings
 
 
 def query_nameserver(name, record, ns_list, cache, rec_depth, master_timeout, qry_start_time,
@@ -196,7 +198,7 @@ def query_nameserver(name, record, ns_list, cache, rec_depth, master_timeout, qr
                 except ValueError:
                     failed_ns_dict[ns_name] = "Glueless lookup failed"
 
-        if ip_or_lookup is not None:
+        if ip_or_lookup is not None and len(ip_or_lookup) != 0:
             msg = dns.message.make_query(name, record, want_dnssec=True)
             try:
                 ns_ip = get_ip_from_lookup(ip_or_lookup)
@@ -313,7 +315,8 @@ def lookup_name_rec_helper(name, record, cache,
                     # print([a.to_text() for a in resp.authority])
                     # print([a.to_text() for a in resp.additional])
                     raise ValueError(f"NoAnswer and different response from backup resolver for domain {name}.")
-                ns_group = ns_rr_sets[0]  # choice of nameserver
+                
+                ns_group = ns_rr_sets[0]  # This line is not actually choice of nameserver. There should only be one rr set with NS record types, we are simply selecting it.
 
                 new_zonelist = lookup_res.zonelist + [ns_group.name]
 
@@ -326,14 +329,16 @@ def lookup_name_rec_helper(name, record, cache,
                         for ns_addr in g:
                             # If the nameserver is already in not already in the list of glued servers, add it with a blank IPv6 record.
                             if g.name.to_text() not in glued_ns_ip_dict:
-                                addr_v4 = ns_addr.address if (g.rdtype == dns.rdatatype.A) else None
-                                addr_v6 = ns_addr.address if (g.rdtype == dns.rdatatype.AAAA) else None
+                                addr_v4 = [ns_addr.address] if (g.rdtype == dns.rdatatype.A) else []
+                                addr_v6 = [ns_addr.address] if (g.rdtype == dns.rdatatype.AAAA) else []
                                 glued_ns_ip_dict[g.name.to_text()] = (addr_v4, addr_v6)
                             else:
                                 # Else it might already be listed with an IPv6 record, iterate through the list, find the index and update the IPv4 record.
                                 (ipv4, ipv6) = glued_ns_ip_dict[g.name.to_text()]
-                                addr_v4 = ns_addr.address if (g.rdtype == dns.rdatatype.A) else ipv4
-                                addr_v6 = ns_addr.address if (g.rdtype == dns.rdatatype.AAAA) else ipv6
+                                if g.rdtype == dns.rdatatype.A:
+                                    addr_v4.append(ns_addr.address)
+                                elif g.rdtype == dns.rdatatype.AAAA:
+                                    addr_v6.append(ns_addr.address)
                                 glued_ns_ip_dict[g.name.to_text()] = (addr_v4, addr_v6)
 
                 glueless_ns_list = [_ for _ in all_ns_list if _ not in glued_ns_ip_dict]
@@ -400,16 +405,16 @@ def get_full_dns_target_ip_list(lookup_result):
         for zone_idx in range(dnssec_count, len(full_ns_lists)):
             all_ns_list = full_ns_lists[zone_idx]
             for ns_name, ns_ip_lkup, ns_ip_lkupv6 in all_ns_list:
-                if isinstance(ns_ip_lkup, str): # These lines will have to be updated to support multiple glued A records properly.
-                    ip_list.append(ns_ip_lkup)
+                if ns_ip_lkup is not None and len(ns_ip_lkup) > 0 and isinstance(ns_ip_lkup[0], str): # These lines will have to be updated to support multiple glued A records properly.
+                    ip_list.extend(ns_ip_lkup)
                 elif ns_ip_lkup is not None:
                     trgt_ipv4, trgt_ipv6 = get_full_dns_target_ip_list(ns_ip_lkup)
                     ip_list.extend(trgt_ipv4)
                     ipv6_list.extend(trgt_ipv6)
                     ip_list.extend(get_all_hostname_addr_from_res_chain(ns_ip_lkup))
 
-                if isinstance(ns_ip_lkupv6, str): # These lines will have to be updated to support multiple glued AAAA records properly.
-                    ipv6_list.append(ns_ip_lkupv6)
+                if ns_ip_lkupv6 is not None and len(ns_ip_lkupv6) > 0 and isinstance(ns_ip_lkupv6[0], str): # These lines will have to be updated to support multiple glued AAAA records properly.
+                    ipv6_list.extend(ns_ip_lkupv6)
                 elif ns_ip_lkupv6 is not None:
                     trgt_ipv4, trgt_ipv6 = get_full_dns_target_ip_list(ns_ip_lkupv6)
                     ip_list.extend(trgt_ipv4)
