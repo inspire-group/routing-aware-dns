@@ -15,6 +15,7 @@ def parse_args():
                         default="./lookups_summary.txt")
     parser.add_argument("-r", "--repetitive_lookups",
                         default=str(sys.maxsize))
+    parser.add_argument("-v", "--vantage_point", required=True)
     return parser.parse_args()
 
 
@@ -27,8 +28,10 @@ def main(args):
 		try:
 			summary_object = json.loads(line)["summary"]
 			for domain in summary_object:
-				domain_target_ips = set()
-				domain_target_ips_v6 = set()
+				domain_target_dns_ips = set()
+				domain_target_a_ips = set()
+				domain_target_dns_ips_v6 = set()
+				domain_target_aaaa_ips = set()
 				lookups = summary_object[domain]
 				if len(lookups) > repetative_lookup_count:
 					lookups = lookups[:repetative_lookup_count]
@@ -36,11 +39,11 @@ def main(args):
 					lookup_info = lookup[1] # The first element is the timestamp, so we want to lookup info in element 2.
 					if isinstance(lookup_info, str): # This is the case where the lookup is an error, we should continue.
 						continue
-					domain_target_ips = domain_target_ips.union(set(lookup_info["a_records"]))
-					domain_target_ips = domain_target_ips.union(set(lookup_info["dns_targ_ipv4"]))
-					domain_target_ips_v6 = domain_target_ips_v6.union(set(lookup_info["aaaa_records"]))
-					domain_target_ips_v6 = domain_target_ips_v6.union(set(lookup_info["dns_targ_ipv6"]))
-				print(f"{domain},{' '.join(domain_target_ips)},{' '.join(domain_target_ips_v6)}")
+					domain_target_a_ips = domain_target_a_ips.union(set(lookup_info["a_records"]))
+					domain_target_dns_ips = domain_target_dns_ips.union(set(lookup_info["dns_targ_ipv4"]))
+					domain_target_aaaa_ips = domain_target_aaaa_ips.union(set(lookup_info["aaaa_records"]))
+					domain_target_dns_ips_v6 = domain_target_dns_ips_v6.union(set(lookup_info["dns_targ_ipv6"]))
+				print(f"{domain},{args.vantage_point},{' '.join(domain_target_a_ips)},{' '.join(domain_target_aaaa_ips)},{' '.join(domain_target_dns_ips)},{' '.join(domain_target_dns_ips_v6)}")
 
 
 
