@@ -79,7 +79,7 @@ def get_all_hostname_addr_from_res_chain(res_chain):
     try:
         for answer_rr in answer_rrset:
             res.append(answer_rr.address)
-        return res
+        return (res, answer_rrset.ttl)
     except AttributeError:
         raise ValueError("The given result chain does not have a valid address. May be a lookup for the wrong record type.", res_chain)
 
@@ -108,7 +108,8 @@ def lookup_name_rec_cached(name, record, cname_chain_count, cache,
                                            master_timeout, qry_start_time,
                                            res_all_glueless)
 
-
+# also log TTL in DNS record
+# we can use VA log IP address, also timestamp
 def lookup_name_backup(name, record, master_timeout, qry_start_time):
 
     backup_resolver = dns.resolver.Resolver()
@@ -362,7 +363,7 @@ def lookup_name_rec_helper(name, record, cache,
                 
                 new_ns_level = d2l(glued_ns_ip_dict) + d2l(glueless_ns_ip_dict)
                 interm_res = DNSResChain(new_ns_chain, new_full_ns_chain, new_zonelist,
-                    new_dnssec_chain, resp)
+                                         new_dnssec_chain, resp)
 
                 stack.append((interm_res, new_ns_level))
 
@@ -376,7 +377,7 @@ def lookup_name_with_full_recursion(name, record, cname_chain_count,
                                     master_timeout, qry_start_time,
                                     res_all_glueless):
 
-    #print(f"lookup for name {name} with record {record} and cache {cache.keys()}")
+    # print(f"lookup for name {name} with record {record} and cache {cache.keys()}")
     backup_res_resp = lookup_name_backup(name, record, master_timeout, 
                                          qry_start_time)
 
@@ -411,7 +412,7 @@ def get_full_dns_target_ip_list(lookup_result):
                     trgt_ipv4, trgt_ipv6 = get_full_dns_target_ip_list(ns_ip_lkup)
                     ip_list.extend(trgt_ipv4)
                     ipv6_list.extend(trgt_ipv6)
-                    ip_list.extend(get_all_hostname_addr_from_res_chain(ns_ip_lkup))
+                    ip_list.extend(get_all_hostname_addr_from_res_chain(ns_ip_lkup)[0])
 
                 if ns_ip_lkupv6 is not None and len(ns_ip_lkupv6) > 0 and isinstance(ns_ip_lkupv6[0], str): # These lines will have to be updated to support multiple glued AAAA records properly.
                     ipv6_list.extend(ns_ip_lkupv6)
@@ -419,7 +420,7 @@ def get_full_dns_target_ip_list(lookup_result):
                     trgt_ipv4, trgt_ipv6 = get_full_dns_target_ip_list(ns_ip_lkupv6)
                     ip_list.extend(trgt_ipv4)
                     ipv6_list.extend(trgt_ipv6)
-                    ipv6_list.extend(get_all_hostname_addr_from_res_chain(ns_ip_lkupv6))
+                    ipv6_list.extend(get_all_hostname_addr_from_res_chain(ns_ip_lkupv6)[0])
               
     return (list(set(ip_list)), list(set(ipv6_list)))
 
@@ -433,7 +434,7 @@ def get_full_targ_ip_list(name, record, include_a_recs):
             raise ValueError("Requested inclusion of A records in target IP list but query was for other record type.", record)
         lookup_res = lookup_name(name, record)
         (res, resv6) = get_full_dns_target_ip_list(lookup_res)
-        res.extend(get_all_hostname_addr_from_res_chain(lookup_res))
+        res.extend(get_all_hostname_addr_from_res_chain(lookup_res)[0])
         return (list(set(res)), resv6)
     else:
         return get_full_dns_target_ip_list(lookup_name(name, record))
@@ -469,12 +470,18 @@ def perform_full_name_lookup(name):
     lookup_dict = {}
     a_records = []
     aaaa_records = []
+    a_ttl = 0
+    aaaa_ttl = 0
 
     dns_targ_ipv4 = []
     dns_targ_ipv6 = []
 
     backup_resp_ipv4 = None
     backup_resp_ipv6 = None
+    backup_resp_a_records = []
+    backup_resp_a_ttl = 0
+    backup_resp_aaaa_records = []
+    backup_resp_aaaa_ttl = 0
 
     match_backup_resv4 = False
     match_backup_resv6 = False
@@ -492,7 +499,9 @@ def perform_full_name_lookup(name):
 
     try:
         lookupv4, match_backup_resv4, backup_resp_ipv4 = lookup_name(name, dns.rdatatype.A)
-        a_records = get_all_hostname_addr_from_res_chain(lookupv4)
+        backup_resp_a_records = [_.address for _ in backup_resp_ipv4.answer[0]]
+        backup_resp_a_ttl = backup_resp_ipv4.answer[0].ttl
+        a_records, a_ttl = get_all_hostname_addr_from_res_chain(lookupv4)
         (lookup4_dns_ipv4, lookup4_dns_ipv6) = get_full_dns_target_ip_list(lookupv4)
         full_graphv4 = True
     except ValueError as lookup_error:
@@ -507,7 +516,9 @@ def perform_full_name_lookup(name):
             # to attempt to get a valid lookup, we can redo the lookup with resolve all gleuless as false.
             try:
                 lookupv4, match_backup_resv4, backup_resp_ipv4 = lookup_name(name, dns.rdatatype.A, res_all_glueless=False)
-                a_records = get_all_hostname_addr_from_res_chain(lookupv4)
+                backup_resp_a_records = [_.address for _ in backup_resp_ipv4.answer[0]]
+                backup_resp_a_ttl = backup_resp_ipv4.answer[0].ttl
+                a_records, a_ttl = get_all_hostname_addr_from_res_chain(lookupv4)
                 (lookup4_dns_ipv4, lookup4_dns_ipv6) = get_full_dns_target_ip_list(lookupv4)
             except ValueError as lookup_error2:
                 if "NoAnswer" in str(lookup_error2):
@@ -521,7 +532,9 @@ def perform_full_name_lookup(name):
 
     try:
         lookupv6, match_backup_resv6, backup_resp_ipv6 = lookup_name(name, dns.rdatatype.AAAA)
-        aaaa_records = get_all_hostname_addr_from_res_chain(lookupv6)
+        backup_resp_aaaa_records = [_.address for _ in backup_resp_ipv6.answer[0]]
+        backup_resp_aaaa_ttl = backup_resp_ipv6.answer[0].ttl
+        aaaa_records, aaaa_ttl = get_all_hostname_addr_from_res_chain(lookupv6)
         (lookup6_dns_ipv4, lookup6_dns_ipv6) = get_full_dns_target_ip_list(lookupv6)
         full_graphv6 = True
     except ValueError as lookup_error:
@@ -536,7 +549,9 @@ def perform_full_name_lookup(name):
             # to attempt to get a valid lookup, we can redo the lookup with resolve all glueless as false.
             try:
                 lookupv6, match_backup_resv6, backup_resp_ipv6 = lookup_name(name, dns.rdatatype.AAAA, res_all_glueless=False)
-                aaaa_records = get_all_hostname_addr_from_res_chain(lookupv6)
+                backup_resp_aaaa_records = [_.address for _ in backup_resp_ipv6.answer[0]]
+                backup_resp_aaaa_ttl = backup_resp_ipv6.answer[0].ttl
+                aaaa_records, aaaa_ttl = get_all_hostname_addr_from_res_chain(lookupv6)
                 (lookup6_dns_ipv4, lookup6_dns_ipv6) = get_full_dns_target_ip_list(lookupv6)
             except ValueError as lookup_error2:
                 if "NoAnswer" in str(lookup_error2):
@@ -550,14 +565,16 @@ def perform_full_name_lookup(name):
     dns_targ_ipv4 = list(set(lookup4_dns_ipv4).union(set(lookup6_dns_ipv4)))
     dns_targ_ipv6 = list(set(lookup4_dns_ipv6).union(set(lookup6_dns_ipv6)))
   
-    lookup_dict["a_records"] = a_records
-    lookup_dict["aaaa_records"] = aaaa_records
+    lookup_dict["a_records"] = a_records, a_ttl
+    lookup_dict["aaaa_records"] = aaaa_records, aaaa_ttl
     lookup_dict["dns_targ_ipv4"] = dns_targ_ipv4
     lookup_dict["dns_targ_ipv6"] = dns_targ_ipv6
     lookup_dict["match_backup_resv4"] = match_backup_resv4
     lookup_dict["match_backup_resv6"] = match_backup_resv6
     lookup_dict["backup_resolver_resp_ipv4"] = backup_resp_ipv4
     lookup_dict["backup_resolver_resp_ipv6"] = backup_resp_ipv6
+    lookup_dict["backup_resolver_a_records"] = backup_resp_a_records, backup_resp_a_ttl
+    lookup_dict["backup_resolver_aaaa_records"] = backup_resp_aaaa_records, backup_resp_aaaa_ttl
     lookup_dict["is_full_graphv4"] = full_graphv4
     lookup_dict["is_full_graphv6"] = full_graphv6
     lookup_dict["lookup_ipv4"] = lookupv4
