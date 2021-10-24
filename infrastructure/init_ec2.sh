@@ -15,7 +15,7 @@ VOL_TYPE="ebs-gp2"
 
 
 check_gen_key () {
-	KEY_FILE="$1.pem"
+	KEY_FILE="keys/$1.pem"
 	if [[ ! -f $KEY_FILE ]]; then
 		echo "Generating RSA key file $KEY_FILE"
 		aws ec2 create-key-pair --key-name $1 --region $REGION | jq -r '.KeyMaterial' > $KEY_FILE
@@ -106,18 +106,23 @@ add_ipv6_route () {
 	                     --region $REGION
 }
 
+setup_region_ipv6 () {
+	VPC_ID=$(get_default_vpc_desc | jq -r ".Vpcs[].VpcId")
+	HAS_IPV6=$(get_default_vpc_desc | jq '.Vpcs[]|has("Ipv6CidrBlockAssociationSet")')
+	if [[ ! $HAS_IPV6 == "true" ]] ; then
+		configure_vpc_ipv6 
+	fi
+
+	configure_subnet_ipv6
+	create_ipv6_sg
+	add_ipv6_route
+}
+
 check_gen_key $KEY_NM
 
-VPC_ID=$(get_default_vpc_desc | jq -r ".Vpcs[].VpcId")
-
-HAS_IPV6=$(get_default_vpc_desc | jq '.Vpcs[]|has("Ipv6CidrBlockAssociationSet")')
-if [[ ! $HAS_IPV6 == "true" ]] ; then
-	configure_vpc_ipv6 
+if [ "${3}" == "--setup" ]; then
+	setup_region_ipv6
 fi
-
-configure_subnet_ipv6
-create_ipv6_sg
-add_ipv6_route
 
 UBUNTU_CLOUD_IMAGES="ubuntu/$PRODUCT/$RELEASE/stable/current/$ARCH/$VIRT_TYPE/$VOL_TYPE/ami-id"
 UBUNTU_AMI_NAME_PATH="/aws/service/canonical/$UBUNTU_CLOUD_IMAGES"
