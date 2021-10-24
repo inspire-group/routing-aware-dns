@@ -84,8 +84,26 @@ def get_all_hostname_addr_from_res_chain(res_chain):
         raise ValueError("The given result chain does not have a valid address. May be a lookup for the wrong record type.", res_chain)
 
 
+def filter_type(ls, select_type):
+
+    return [_ for _ in ls if _.rdtype == select_type]
+
+
 def lookup_a_rec(name):
     return lookup_name(name, dns.rdatatype.A)
+
+
+def lookup_soa(name):
+
+    soa_serial = None
+    backup_soa_serial = None
+    try:
+        soa_lookup = lookup_name(name, dns.rdatatype.SOA)
+        soa_serial = filter_type(soa_lookup[0][-1].answer_rrset, dns.rdatatype.SOA)[0].serial
+        backup_soa_serial = filter_type(soa_lookup[2].answer, dns.rdatatype.SOA)[0][0].serial
+    except ValueError:
+        pass
+    return (soa_serial, backup_soa_serial)
 
 
 def lookup_name(name, record_type, rec_limit=10, res_all_glueless=True, 
@@ -108,8 +126,6 @@ def lookup_name_rec_cached(name, record, cname_chain_count, cache,
                                            master_timeout, qry_start_time,
                                            res_all_glueless)
 
-# also log TTL in DNS record
-# we can use VA log IP address, also timestamp
 def lookup_name_backup(name, record, master_timeout, qry_start_time):
 
     backup_resolver = dns.resolver.Resolver()
@@ -204,7 +220,7 @@ def query_nameserver(name, record, ns_list, cache, rec_depth, master_timeout, qr
             try:
                 ns_ip = get_ip_from_lookup(ip_or_lookup)
                 (resp, is_tcp) = dns.query.udp_with_fallback(msg, ns_ip,
-                    timeout=4, source=None, ignore_trailing=True)
+                    timeout=4, ignore_trailing=True)
                 if len(resp.answer) == 0 and len(resp.authority) == 0:
                     failed_ns_dict[ns_name] = "No answer or authority"
                 else:
@@ -408,7 +424,7 @@ def get_full_dns_target_ip_list(lookup_result):
             for ns_name, ns_ip_lkup, ns_ip_lkupv6 in all_ns_list:
                 if ns_ip_lkup is not None and len(ns_ip_lkup) > 0 and isinstance(ns_ip_lkup[0], str): # These lines will have to be updated to support multiple glued A records properly.
                     ip_list.extend(ns_ip_lkup)
-                elif ns_ip_lkup is not None:
+                elif ns_ip_lkup is not None and len(ns_ip_lkup) > 0:
                     trgt_ipv4, trgt_ipv6 = get_full_dns_target_ip_list(ns_ip_lkup)
                     ip_list.extend(trgt_ipv4)
                     ipv6_list.extend(trgt_ipv6)
@@ -416,7 +432,7 @@ def get_full_dns_target_ip_list(lookup_result):
 
                 if ns_ip_lkupv6 is not None and len(ns_ip_lkupv6) > 0 and isinstance(ns_ip_lkupv6[0], str): # These lines will have to be updated to support multiple glued AAAA records properly.
                     ipv6_list.extend(ns_ip_lkupv6)
-                elif ns_ip_lkupv6 is not None:
+                elif ns_ip_lkupv6 is not None and len(ns_ip_lkupv6) > 0:
                     trgt_ipv4, trgt_ipv6 = get_full_dns_target_ip_list(ns_ip_lkupv6)
                     ip_list.extend(trgt_ipv4)
                     ipv6_list.extend(trgt_ipv6)

@@ -5,7 +5,6 @@ import botocore
 from datetime import date, datetime
 import gzip
 import json
-import linecache
 import multiprocessing as mp
 import os
 from pathlib import Path
@@ -16,8 +15,6 @@ import sys
 import time
 import logging
 
-# sample 1 in 1000 certificates
-# single thread with 10 second timeout per domain
 TODAY = date.today().strftime("%Y%m%d")
 DATA_BUCKET_NAME = "letsencryptdata"
 RES_BUCKET_NAME = "letsencryptdnsresults"
@@ -73,8 +70,10 @@ def write_logs_to_bucket(session):
     region = session.region_name
     key_prfx = TODAY + "/" + region + "/"
 
-    result_bucket.upload_file(RES_FILE, key_prfx + "lookups_summary.txt")
-    result_bucket.upload_file(FULL_LKUP_FILE, key_prfx + "full_lookups_archive.gz")
+    result_bucket.upload_file(RES_FILE, key_prfx + "lookups_summary.txt",
+        ExtraArgs={'ACL': 'bucket-owner-full-control'})
+    result_bucket.upload_file(FULL_LKUP_FILE, key_prfx + "full_lookups_archive.gz",
+        ExtraArgs={'ACL': 'bucket-owner-full-control'})
 
     end = time.time()
     logging.info(f'Copied lookup result files to S3 bucket {RES_BUCKET_NAME} in {(end - start):.4f} seconds.')
@@ -101,8 +100,6 @@ def parse(log_file, cert_count):
         line_ctr = 0
         for line in f:
             if line_ctr in rand_line_sample:
-            # if len(certs_seen) >= cert_count:
-            #     break
                 l = line.decode()
                 le_ts = l[:l.index(" ")]
                 cert_log = json.loads(l[l.index(JSON_TAG)+len(JSON_TAG):])
@@ -156,6 +153,8 @@ def get_lookups(id_, urls):
     for url in urls:
         domain_full_lookups = []
         domain_smry = []
+        # get serial number only once
+        serial, backup_serial = dns_resolver.lookup_soa(url)
         for iter in range(NUM_REPEAT_LKUPS):
             start = datetime.now()
             lookup_ts = str(start.astimezone())
@@ -184,6 +183,8 @@ def get_lookups(id_, urls):
                 failed += 1
             
         summary[url] = domain_smry
+        summary["soa_serial"] = serial
+        summary["backup_soa_serial"] = backup_serial
         full_lkups[url] = domain_full_lookups
 
     lookup_result = {"ID": id_, "summary": summary, "full": full_lkups}
@@ -205,7 +206,6 @@ def worker(in_q, out_q):
         failed += fail_lkup
         out_q.put((lookup, le_ts))
         lookups_done.append(lookup)
-        print(f'Worker {name} completed a lookup')
     end = time.time()
     print(f'Time for {name} to perform {successful + failed} lookups: {(end-start):.4f} sec.')
     return (successful, failed)
@@ -214,6 +214,7 @@ def worker(in_q, out_q):
 def listener(write_q):
     # listens for lookup messages on the queue and writes to file
     counter = 0
+
     with open(RES_FILE, "a") as lookup_f, gzip.open(FULL_LKUP_FILE, "wb") as archive_f:
         finished = False
         while not finished:
