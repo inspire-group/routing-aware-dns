@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import pickle
 from random import Random
+import requests
 import routing_aware_dns_resolver as dns_resolver
 import sys
 import time
@@ -68,6 +69,8 @@ def write_logs_to_bucket(session):
     s3 = session.resource('s3')
     result_bucket = s3.Bucket(RES_BUCKET_NAME)
     region = session.region_name
+    resp_json = requests.get("http://169.254.169.254/latest/dynamic/instance-identity/document").json()
+    region = resp_json.get('region')
     key_prfx = TODAY + "/" + region + "/"
 
     result_bucket.upload_file(RES_FILE, key_prfx + "lookups_summary.txt",
@@ -95,7 +98,6 @@ def parse(log_file, cert_count):
     rand_gen = Random(Random(dateseed).random())
     rand_line_sample = rand_gen.sample(range(num_lines), cert_count)
 
-    print(f'sampling lines {rand_line_sample} from the file (total number of lines: {num_lines}')
     with gzip.open(log_file) as f:
         line_ctr = 0
         for line in f:
@@ -143,7 +145,7 @@ def process_daily_log(args):
     return 0
 
 
-def get_lookups(id_, urls):
+def get_lookups(id_, urls, soa_enabled=False):
 
     successful = 0
     failed = 0
@@ -154,7 +156,10 @@ def get_lookups(id_, urls):
         domain_full_lookups = []
         domain_smry = []
         # get serial number only once
-        serial, backup_serial = dns_resolver.lookup_soa(url)
+        if soa_enabled:
+            serial, backup_serial = dns_resolver.lookup_soa(url)
+        else:
+            serial, backup_serial = None, None
         for iter in range(NUM_REPEAT_LKUPS):
             start = datetime.now()
             lookup_ts = str(start.astimezone())
