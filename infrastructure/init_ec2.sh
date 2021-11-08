@@ -20,6 +20,7 @@ check_gen_key () {
 		echo "Generating RSA key file $KEY_FILE"
 		aws ec2 create-key-pair --key-name $1 --region $REGION | jq -r '.KeyMaterial' > $KEY_FILE
 		aws ec2 wait key-pair-exists --key-names $1 --region $REGION
+		chmod 600 $KEY_FILE
 	else
 		echo "Key $KEY_NM already present; using it"
 	fi
