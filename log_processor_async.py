@@ -64,7 +64,7 @@ def read_log_from_bucket(session, log_file):
     logging.info(f'Downloaded log from S3 in {(end - start):.4f} seconds.')
 
 
-def write_logs_to_bucket(session):
+def write_logs_to_bucket(session, log_file):
 
     start = time.time()
     print(f'writing logs to bucket')
@@ -73,8 +73,8 @@ def write_logs_to_bucket(session):
     region = session.region_name
     resp_json = requests.get("http://169.254.169.254/latest/dynamic/instance-identity/document").json()
     region = resp_json.get('region')
-    print(f"region is {region}")
-    key_prfx = TODAY + "/" + region + "/"
+    log_date = log_file[log_file.index("-") + 1:]
+    key_prfx = log_date + "/" + region + "/"
 
     result_bucket.upload_file(RES_FILE, key_prfx + "lookups_summary.txt",
         ExtraArgs={'ACL': 'bucket-owner-full-control'})
@@ -143,7 +143,7 @@ def process_daily_log(args):
     read_log_from_bucket(session, log_file)
     certs = parse(log_file, MAX_COUNT)
     lookup_res = resolve_dns(m, certs)
-    # write_logs_to_bucket(session)
+    write_logs_to_bucket(session, log_file)
     logging.info('Successfuly logged DNS lookups.')
     return 0
 
