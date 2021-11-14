@@ -11,11 +11,11 @@ import os
 from pathlib import Path
 import pickle
 from random import Random
-import requests
-import routing_aware_dns_resolver_async as dns_resolver
-import sys
 import time
 import logging
+import argparse
+import requests
+import routing_aware_dns_resolver_async as dns_resolver
 
 TODAY = date.today().strftime("%Y%m%d")
 DATA_BUCKET_NAME = "letsencryptdata"
@@ -89,7 +89,7 @@ def write_logs_to_bucket(session, log_file):
 
 '''Returns a list of (cert ID, [domains], le_ts) tuples of length cert_count.
 '''
-def parse(log_file, cert_count):
+def parse(log_file, cert_count, rand_seed):
 
     out_q = []
     certs_seen = set()
@@ -97,8 +97,7 @@ def parse(log_file, cert_count):
 
     num_lines = sum(1 for line in lz4.frame.open(log_file))
     # use ordinal date as seed to coordinate samples across servers
-    dateseed = date.today().toordinal()
-    rand_gen = Random(Random(dateseed).random())
+    rand_gen = Random(Random(rand_seed).random())
     rand_line_sample = rand_gen.sample(range(num_lines), cert_count)
 
     with lz4.frame.open(log_file) as f:
@@ -130,19 +129,18 @@ def parse(log_file, cert_count):
 
 def process_daily_log(args):
 
-    if len(args) > 1:
-        log_file = sys.argv[1]
-    else:
-        log_file = LOG_FILE
+    log_file = args.log_file
+    num_certs = args.num
+    seed = args.seed
 
-    print(f'Performing lookups for log file {log_file}')
     logging.info(f'Performing lookups for log file {log_file}')
     session = boto3.Session()
     m = mp.Manager()  # TODO: enable multiprocessing with a flag
 
     read_log_from_bucket(session, log_file)
-    certs = parse(log_file, MAX_COUNT)
+    certs = parse(log_file, num_certs, seed)
     lookup_res = resolve_dns(m, certs)
+
     write_logs_to_bucket(session, log_file)
     logging.info('Successfuly logged DNS lookups.')
     return 0
@@ -261,7 +259,7 @@ def resolve_dns(manager, cert_q):
 
     start = time.time()
 
-    max_proc = mp.cpu_count() + 2
+    max_proc = mp.cpu_count() + 1
 
     pool = mp.Pool(max_proc)
     lookup_q = manager.Queue()
@@ -299,6 +297,16 @@ def resolve_dns(manager, cert_q):
 if __name__ == '__main__':
 
     start = time.time()
-    result = process_daily_log(sys.argv)
+
+    parser = argparse.ArgumentParser(description="Daily Let's Encrypt lookup process")
+    parser.add_argument("log_file", metavar="file_name", type=str,
+                        help="Name of the log file to perform lookups on.")
+    parser.add_argument("-n", "--num", type=int, default=MAX_COUNT, 
+                        help="Number of certs to look up.")
+    parser.add_argument("-s", "--seed", type=int, default=date.today().toordinal(),
+                        help="Random seed for sampling certs.")
+    args = parser.parse_args()
+
+    result = process_daily_log(args)
     end = time.time()
     logging.info(f'Total of {(end - start):.4f} sec. to download, process, and resolve daily log.')
