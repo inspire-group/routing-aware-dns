@@ -131,11 +131,20 @@ UBUNTU_AMI_NAME_PATH="/aws/service/canonical/$UBUNTU_CLOUD_IMAGES"
 AMI_ID=`/usr/local/bin/aws ssm get-parameters --names $UBUNTU_AMI_NAME_PATH \
 --region $REGION | jq -r ".Parameters | .[] | .Value"`
 
-aws ec2 run-instances --image-id $AMI_ID --count 1 \
+SG_ID=$(aws ec2 describe-security-groups --region $REGION --filters "Name=group-name,Values=le-log-sg-$REGION" | jq -r ".SecurityGroups[].GroupId")
+
+INSTANCE_ID=$(aws ec2 run-instances --image-id $AMI_ID --count 1 \
 	--region $REGION\
 	--ipv6-address-count 1\
 	--instance-type $INSTANCE_SIZE --key-name $KEY_NM \
 	--security-group-ids $SG_ID --iam-instance-profile "Arn=$IAM_ARN"\
-	--user-data file://instance_setup.sh
+	--user-data file://instance_setup.sh | jq -r ".Instances[].InstanceId")
+
+aws ec2 wait instance-exists --instance-ids $INSTANCE_ID --region $REGION
+
+DNS_NAME=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --region $REGION | 
+			jq -r '.Reservations[].Instances[].PublicDnsName')
+
+echo $DNS_NAME
 
 exit 0

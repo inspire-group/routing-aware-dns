@@ -13,6 +13,7 @@ unzip awscliv2.zip
 apt install python3-pip -y
 pip3 install boto3
 pip3 install dnspython
+pip3 install lz4
 
 # install Github deploy key
 su ubuntu <<'EOF'
