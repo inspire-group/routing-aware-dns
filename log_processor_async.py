@@ -64,6 +64,14 @@ def read_log_from_bucket(session, log_file):
     logging.info(f'Downloaded log from S3 in {(end - start):.4f} seconds.')
 
 
+def gz_compress(f_nm, compr_f_nm):
+    f_in = open(f_nm, 'rb')
+    f_out = gzip.open(compr_f_nm, 'wb')
+    f_out.writelines(f_in)
+    f_out.close()
+    f_in.close()    
+
+
 def write_logs_to_bucket(session, log_file):
 
     start = time.time()
@@ -73,17 +81,23 @@ def write_logs_to_bucket(session, log_file):
     region = session.region_name
     resp_json = requests.get("http://169.254.169.254/latest/dynamic/instance-identity/document").json()
     region = resp_json.get('region')
-    log_date = log_file[log_file.index("-") + 1:]
-    key_prfx = log_date + "/" + region + "/"
+    le_log_date = log_file[log_file.index("-") + 1:]
+    key_prfx = le_log_date + "/" + region + "/"
 
-    result_bucket.upload_file(RES_FILE, key_prfx + "lookups_summary.txt",
-        ExtraArgs={'ACL': 'bucket-owner-full-control'})
+    gz_compress(RES_FILE, "lookups_summary.gz")
+    result_bucket.upload_file(RES_FILE, key_prfx + "lookups_summary.gz",
+                              ExtraArgs={'ACL': 'bucket-owner-full-control'})
+
     result_bucket.upload_file(FULL_LKUP_FILE, key_prfx + "full_lookups_archive.gz",
-        ExtraArgs={'ACL': 'bucket-owner-full-control'})
+                              ExtraArgs={'ACL': 'bucket-owner-full-control'})
 
     end = time.time()
     logging.info(f'Copied lookup result files to S3 bucket {RES_BUCKET_NAME} in {(end - start):.4f} seconds.')
 
+    compr_log = "logfile_" + TODAY + ".log"
+    gz_compress(LOGGER_FILE, compr_log)
+    result_bucket.upload_file(compr_log, key_prfx + compr_log, 
+                              ExtraArgs={'ACL': 'bucket-owner-full-control'})
     return 0
 
 
@@ -142,7 +156,6 @@ def process_daily_log(args):
     lookup_res = resolve_dns(m, certs)
 
     write_logs_to_bucket(session, log_file)
-    logging.info('Successfuly logged DNS lookups.')
     return 0
 
 
