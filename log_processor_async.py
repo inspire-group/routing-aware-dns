@@ -15,13 +15,14 @@ import time
 import logging
 import argparse
 import requests
+import more_itertools as mit
 import routing_aware_dns_resolver_async as dns_resolver
 
 TODAY = date.today().strftime("%Y%m%d")
 DATA_BUCKET_NAME = "letsencryptdata"
 RES_BUCKET_NAME = "letsencryptdnsresults"
 LOG_FOLDER = "le_logs/"
-LOG_FILE = "den-issuance.log-20210830.gz"  # f'issuance.log.den-{TODAY}.gz'
+LOG_FILE = f"den-issuance.log-{TODAY}.gz"
 LOOKUP_FOLDER = "lookup_results/"
 RES_FILE = f"lookup-results-{TODAY}.txt"
 FULL_LKUP_FILE = f"lookups-archive-{TODAY}.gz"
@@ -72,7 +73,7 @@ def gz_compress(f_nm, compr_f_nm):
     f_in.close()    
 
 
-def write_logs_to_bucket(session, log_file):
+def write_logs_to_bucket(session, log_file, part):
 
     start = time.time()
     print(f'writing logs to bucket')
@@ -85,16 +86,16 @@ def write_logs_to_bucket(session, log_file):
     key_prfx = le_log_date + "/" + region + "/"
 
     gz_compress(RES_FILE, "lookups_summary.gz")
-    result_bucket.upload_file(RES_FILE, key_prfx + "lookups_summary.gz",
+    result_bucket.upload_file(RES_FILE, key_prfx + f"lookups_summary_part{part}.gz",
                               ExtraArgs={'ACL': 'bucket-owner-full-control'})
 
-    result_bucket.upload_file(FULL_LKUP_FILE, key_prfx + "full_lookups_archive.gz",
+    result_bucket.upload_file(FULL_LKUP_FILE, key_prfx + f"full_lookups_archive_part{part}.gz",
                               ExtraArgs={'ACL': 'bucket-owner-full-control'})
 
     end = time.time()
     logging.info(f'Copied lookup result files to S3 bucket {RES_BUCKET_NAME} in {(end - start):.4f} seconds.')
 
-    compr_log = "logfile_" + TODAY + ".log"
+    compr_log = "logfile_" + TODAY + "_part" + str(part) + ".log"
     gz_compress(LOGGER_FILE, compr_log)
     result_bucket.upload_file(compr_log, key_prfx + compr_log, 
                               ExtraArgs={'ACL': 'bucket-owner-full-control'})
@@ -103,21 +104,24 @@ def write_logs_to_bucket(session, log_file):
 
 '''Returns a list of (cert ID, [domains], le_ts) tuples of length cert_count.
 '''
-def parse(log_file, cert_count, rand_seed):
+def parse(log_file, cert_count, rand_seed, partition):
 
     out_q = []
     certs_seen = set()
     start = time.time()
 
+    part, num_part = partition
+
     num_lines = sum(1 for line in lz4.frame.open(log_file))
     # use ordinal date as seed to coordinate samples across servers
     rand_gen = Random(Random(rand_seed).random())
     rand_line_sample = rand_gen.sample(range(num_lines), cert_count)
+    rand_sample_seg = list(mit.divide(num_part, rand_line_sample)[part])
 
     with lz4.frame.open(log_file) as f:
         line_ctr = 0
         for line in f:
-            if line_ctr in rand_line_sample:
+            if line_ctr in rand_sample_seg:
                 l = line.decode()
                 le_ts = l[:l.index(" ")]
                 cert_log = json.loads(l[l.index(JSON_TAG)+len(JSON_TAG):])
@@ -146,16 +150,18 @@ def process_daily_log(args):
     log_file = args.log_file
     num_certs = args.num
     seed = args.seed
+    part = args.partition
+    num_part = args.num_partitions
 
     logging.info(f'Performing lookups for log file {log_file}')
     session = boto3.Session()
     m = mp.Manager()  # TODO: enable multiprocessing with a flag
 
     read_log_from_bucket(session, log_file)
-    certs = parse(log_file, num_certs, seed)
+    certs = parse(log_file, num_certs, seed, (part, num_part))
     lookup_res = resolve_dns(m, certs)
 
-    write_logs_to_bucket(session, log_file)
+    write_logs_to_bucket(session, log_file, part)
     return 0
 
 
@@ -303,7 +309,7 @@ def resolve_dns(manager, cert_q):
     logging.info(f'{tot} cert lookups completed in {(end-start):.4f} seconds.')
 
     print(f'All the lookups done: {lookups_success} successful {lookups_failed} failed')
-    print(f'Time for all tasks to finish ({MAX_COUNT} certificate lookups): {(end-start):.4f}')
+    print(f'Time for all tasks to finish ({len(cert_q)} certificate lookups): {(end-start):.4f}')
     return all_lookups
 
 
@@ -316,6 +322,10 @@ if __name__ == '__main__':
                         help="Name of the log file to perform lookups on.")
     parser.add_argument("-n", "--num", type=int, default=MAX_COUNT, 
                         help="Number of certs to look up.")
+    parser.add_argument("-np", "--num-partitions", type=int, default=2,
+                        help="Number of instances lookups are divided across.")
+    parser.add_argument("-p", "--partition", type=int, default=0,
+                        help="Partition number for this process.")
     parser.add_argument("-s", "--seed", type=int, default=date.today().toordinal(),
                         help="Random seed for sampling certs.")
     args = parser.parse_args()
