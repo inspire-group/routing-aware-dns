@@ -21,9 +21,7 @@ import routing_aware_dns_resolver_async as dns_resolver
 TODAY = date.today().strftime("%Y%m%d")
 DATA_BUCKET_NAME = "letsencryptdata"
 RES_BUCKET_NAME = "letsencryptdnsresults"
-LOG_FOLDER = "le_logs/"
 LOG_FILE = f"den-issuance.log-{TODAY}.gz"
-LOOKUP_FOLDER = "lookup_results/"
 RES_FILE = f"lookup-results-{TODAY}.txt"
 FULL_LKUP_FILE = f"lookups-archive-{TODAY}.gz"
 LOGGER_FILE = f"log-{TODAY}.log"
@@ -226,14 +224,12 @@ def worker(in_q, out_q):
     successful = 0
     failed = 0
     start = time.time()
-    lookups_done = []
     for cert in in_q:
         cert_id, cert_urls, le_ts = cert
         lookup, succ_lkup, fail_lkup = get_lookups(cert_id, cert_urls)
         successful += succ_lkup
         failed += fail_lkup
         out_q.put((lookup, le_ts))
-        lookups_done.append(lookup)
     end = time.time()
     print(f'Time for {name} to perform {successful + failed} lookups: {(end-start):.4f} sec.')
     return (successful, failed)
