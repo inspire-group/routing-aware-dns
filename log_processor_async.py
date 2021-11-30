@@ -84,7 +84,7 @@ def write_logs_to_bucket(session, log_file, part):
     key_prfx = le_log_date + "/" + region + "/"
 
     gz_compress(RES_FILE, "lookups_summary.gz")
-    result_bucket.upload_file(RES_FILE, key_prfx + f"lookups_summary_part{part}.gz",
+    result_bucket.upload_file("lookups_summary.gz", key_prfx + f"lookups_summary_part{part}.gz",
                               ExtraArgs={'ACL': 'bucket-owner-full-control'})
 
     result_bucket.upload_file(FULL_LKUP_FILE, key_prfx + f"full_lookups_archive_part{part}.gz",
