@@ -36,7 +36,8 @@ class DNSLookup:
         addr_list = []
         ttl = 0
         if self.backup_lookup is not None:
-            ans = self.backup_lookup.answer[-1]
+            answer_rrs = filt(self.backup_lookup.answer, self.record_type)
+            ans = answer_rrs[-1]
             addr_list =[_.address for _ in ans]
             ttl = ans.ttl
         return addr_list, ttl
