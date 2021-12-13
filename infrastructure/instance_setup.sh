@@ -1,14 +1,15 @@
 #!/bin/bash
 
 UBUNTU_HOME="/home/ubuntu"
+
 # install dependencies and AWS tools
 apt update
-
 apt install jq -y
 apt install unzip
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
+# curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
-./aws/install
+./aws/install --update
 
 apt install python3-pip -y
 pip3 install boto3
@@ -32,5 +33,16 @@ apt install unbound=1.9.4-2ubuntu1.2 -y
 su -u unbound unbound-agent
 mv /home/ubuntu/routing-aware-dns/infrastructure/unbound.conf /etc/unbound/unbound.conf
 systemctl restart unbound
+systemctl disable --now snapd.service
+systemctl disable --now snapd.socket
+systemctl disable --now snapd.seeded
+systemctl disable --now snapd.snap-repair.timer
+systemctl disable --now snapd
 
-exit 0
+
+
+# run lookups
+cd /home/ubuntu/routing-aware-dns
+python3 log_processor_async.py "LE_LOG" -n NUM_LOOKUPS -np PARTS -p PART_NUM
+
+shutdown -h now

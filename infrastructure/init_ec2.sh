@@ -1,7 +1,11 @@
 #!/bin/bash
 
+
 REGION=$1
-INSTANCE_SIZE=$2
+LOG_DATE=$2
+NUM_LOOKUPS=$3
+PARTS=$4
+INSTANCE_SIZE="t4g.small"
 
 KEY_NM="le-logprocess-key-$REGION"
 IAM_ARN="arn:aws:iam::696090498373:instance-profile/LELogProcessing"
@@ -9,7 +13,7 @@ IAM_NM="LELogProcessing"
 
 PRODUCT="server"
 RELEASE="20.04"
-ARCH="amd64"
+ARCH="arm64" #"amd64"
 VIRT_TYPE="hvm"
 VOL_TYPE="ebs-gp2"
 
@@ -133,18 +137,25 @@ AMI_ID=`/usr/local/bin/aws ssm get-parameters --names $UBUNTU_AMI_NAME_PATH \
 
 SG_ID=$(aws ec2 describe-security-groups --region $REGION --filters "Name=group-name,Values=le-log-sg-$REGION" | jq -r ".SecurityGroups[].GroupId")
 
-INSTANCE_ID=$(aws ec2 run-instances --image-id $AMI_ID --count 1 \
-	--region $REGION\
-	--ipv6-address-count 1\
-	--instance-type $INSTANCE_SIZE --key-name $KEY_NM \
-	--security-group-ids $SG_ID --iam-instance-profile "Arn=$IAM_ARN"\
-	--user-data file://instance_setup.sh | jq -r ".Instances[].InstanceId")
+LE_LOG_FILE="denissuance.log-$LOG_DATE"
+TOTAL_PART_NUM=$(($PARTS-1))
+for part_num in $(eval echo {0..$TOTAL_PART_NUM}); do
+	sed -e "s/LE_LOG/$LE_LOG_FILE/; s/NUM_LOOKUPS/$NUM_LOOKUPS/; s/PARTS/$PARTS/; s/PART_NUM/$part_num/" instance_setup.sh > instance_setup_TEMP.sh
 
-aws ec2 wait instance-exists --instance-ids $INSTANCE_ID --region $REGION
+	INSTANCE_ID=$(aws ec2 run-instances --image-id $AMI_ID --count 1 \
+		--region $REGION\
+		--ipv6-address-count 1\
+		--instance-type $INSTANCE_SIZE --key-name $KEY_NM \
+		--security-group-ids $SG_ID --iam-instance-profile "Arn=$IAM_ARN"\
+		--user-data file://instance_setup_TEMP.sh | jq -r ".Instances[].InstanceId")
 
-DNS_NAME=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --region $REGION | 
-			jq -r '.Reservations[].Instances[].PublicDnsName')
+	aws ec2 wait instance-exists --instance-ids $INSTANCE_ID --region $REGION
 
-echo $DNS_NAME
+	echo "instance ID for $part_num: $INSTANCE_ID"
+	DNS_NAME=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --region $REGION |
+				jq -r '.Reservations[].Instances[].PublicDnsName')
+
+	echo $DNS_NAME;
+done
 
 exit 0
