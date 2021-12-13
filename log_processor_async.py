@@ -27,7 +27,7 @@ FULL_LKUP_FILE = f"lookups-archive-{TODAY}.gz"
 LOGGER_FILE = f"log-{TODAY}.log"
 JSON_TAG = "JSON="
 MAX_COUNT = 10000
-NUM_REPEAT_LKUPS = 10
+RTYPE_LKUPS = {"A": 10, "AAAA": 10, "SOA": 1}
 
 logging.basicConfig(filename=LOGGER_FILE,
                     format='%(asctime)s %(levelname)-8s %(message)s',
@@ -171,48 +171,53 @@ def get_lookups(id_, urls, soa_enabled=False):
 
     summary = {}
     full_lkups = {}
+
+    wc_skipped = []
     for url in urls:
-        domain_full_lookups = []
-        domain_smry = []
-        # get serial number only once
-        if soa_enabled:
-            serial, backup_serial = dns_resolver.lookup_soa(url)
+
+        if "*" in url:  # check for and skip wildcard domains
+            wc_skipped.append(url)
         else:
-            serial, backup_serial = None, None
 
-        start = datetime.now()
-        lookup_ts = str(start.astimezone())
-        lookups = dns_resolver.perform_full_name_lookup_batched(url, NUM_REPEAT_LKUPS)
-        for lookup in lookups:
-            if isinstance(lookup, Exception):
-                end = datetime.now()
-                exec_time = end - start
-                logging.debug(f'Failed to resolve domain {url} for ID {id_}: {str(lookup)} (took {exec_time.seconds}.{exec_time.microseconds} seconds.)')
-                domain_full_lookups.append((lookup_ts, str(lookup)))
-                domain_smry.append((lookup_ts, str(lookup)))
-                failed += 1
-            else:
-                end = datetime.now()
-                ipv4_lkup = lookup.pop("lookup_ipv4")
-                ipv6_lkup = lookup.pop("lookup_ipv6")
-                backup_resp_ipv4 = lookup.pop("backup_resolver_resp_ipv4")
-                backup_resp_ipv6 = lookup.pop("backup_resolver_resp_ipv6")
-                domain_full_lookups.append((lookup_ts, 
-                                            ipv4_lkup, 
-                                            ipv6_lkup, 
-                                            backup_resp_ipv4, 
-                                            backup_resp_ipv6))
-                domain_smry.append((lookup_ts, lookup))
-                successful += 1
-                exec_time = end - start
-                logging.debug(f'Completed a lookup for domain {url} (cert ID {id_}) in {exec_time.seconds}.{exec_time.microseconds} seconds.')
-            
-        summary[url] = domain_smry
-        summary["soa_serial"] = serial
-        summary["backup_soa_serial"] = backup_serial
-        full_lkups[url] = domain_full_lookups
+            lookups = dns_resolver.lookup_full_name_batched(url, RTYPE_LKUPS)
 
-    lookup_result = {"ID": id_, "summary": summary, "full": full_lkups}
+            domain_full_lookups = {}
+            domain_smry = {}
+            for rec_type in lookups:
+                summ_accum = []
+                full_accum = []
+                fail_ct = 0
+                succ_ct = 0
+                for each_lookup in lookups[rec_type]:
+                    archive_lookup = {}
+                    archive_lookup["ts"] = each_lookup["ts"]
+                    if "backup_error_msg" in each_lookup:
+                        archive_lookup["backup_error_msg"] = each_lookup["backup_error_msg"]
+                        fail_ct += 1
+                    else:
+                        archive_lookup["backup_resp"] = each_lookup.pop("backup_resp")
+                        succ_ct += 1
+                    if "error_msg" in each_lookup:
+                        archive_lookup["error_msg"] = each_lookup["error_msg"]
+                        fail_ct += 1
+                    else:
+                        archive_lookup["full_lookup"] = each_lookup.pop("full_lookup")
+                        succ_ct += 1
+                    full_accum.append(archive_lookup)
+                    summ_accum.append(each_lookup)
+                successful += succ_ct
+                failed += fail_ct
+                domain_smry[rec_type] = summ_accum
+                domain_full_lookups[rec_type] = full_accum
+                
+            summary[url] = domain_smry
+
+            full_lkups[url] = domain_full_lookups
+
+    lookup_result = {"ID": id_, 
+                     "summary": summary, 
+                     "full": full_lkups, 
+                     "wildcards_skipped": wc_skipped}
     end_exec = time.time()
     return (lookup_result, successful, failed)
 
@@ -252,8 +257,11 @@ def listener(write_q):
                 write_q.task_done()
             else:
                 lookup, le_ts = msg
-                stats = {"ID": lookup["ID"], "le_ts": le_ts, "summary": lookup["summary"]}
-                full_graph = {"ID": lookup["ID"], "le_ts": le_ts, "full": lookup["full"]}
+                stats = {"ID": lookup["ID"], "le_ts": le_ts, 
+                         "summary": lookup["summary"],
+                         "wildcards_skipped": lookup["wildcards_skipped"]}
+                full_graph = {"ID": lookup["ID"], "le_ts": le_ts, 
+                              "full": lookup["full"]}
                 lookup_f.write(json.dumps(stats) + '\n')
                 lookup_f.flush()
                 pickle.dump(full_graph, archive_f, pickle.HIGHEST_PROTOCOL)

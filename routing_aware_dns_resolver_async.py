@@ -1,9 +1,12 @@
+import copy
+import datetime
 import dns.name
 import dns.query
 import dns.dnssec
 import dns.message
 import dns.asyncresolver
 import dns.resolver
+import dns.rcode
 import dns.rdatatype
 import dns.exception
 import dns.asyncquery
@@ -84,10 +87,6 @@ DNSResChain = namedtuple("DNSResChain", ["ns_chain", "full_ns_chain",
                                          "answer_rrset"])
 
 
-def get_hostname_addr(name):
-    return get_hostname_addr_from_res_chain(lookup_a_rec(name))
-  
-
 def get_hostname_addr_from_res_chain(res_chain):
 
     answer_rrset = res_chain[-1].answer_rrset
@@ -117,7 +116,6 @@ def get_all_hostname_addr_from_res_chain(res_chain):
 
 
 def filt(ls, select_type):
-
     return [_ for _ in ls if _.rdtype == select_type]
 
 
@@ -125,26 +123,8 @@ def lookup_a_rec(name):
     return lookup_name(name, dns.rdatatype.A)
 
 
-def lookup_soa(name):
-
-    soa_serial = None
-    backup_soa_serial = None
-    try:
-        soa_lookup = lookup_name(name, dns.rdatatype.SOA)
-        soa_serial = filt(soa_lookup[0][-1].answer_rrset, dns.rdatatype.SOA)[0].serial
-        backup_soa_serial = filt(soa_lookup[2].answer, dns.rdatatype.SOA)[0][0].serial
-    except ValueError:
-        pass
-    return (soa_serial, backup_soa_serial)
-
-
 async def lookup_name(name, record_type, rec_limit=10, res_all_glueless=True):
-    return await lookup_name_rec(name, record_type, rec_limit, res_all_glueless)
-
-
-async def lookup_name_rec(name, record, cname_chain_count, res_all_glueless):
-    return await asyncio.wait_for(lookup_name_rec_cached(name, record, cname_chain_count, {}, 
-                                        res_all_glueless), timeout=10)
+    return await lookup_name_rec_cached(name, record_type, rec_limit, {}, res_all_glueless)
 
 
 class BackupResolverError(Exception):
@@ -167,13 +147,13 @@ async def lookup_backup_async(name, record, master_timeout=10):
         if "answered SERVFAIL" in ns_error.msg:
             raise BackupResolverError(f"SERVFAIL for domain {name}. Likely invalid DNSSEC.")
         else:
-            raise
+            raise BackupResolverError(f"NoNameservers for domain {name}: {ns_error.msg}")
     except dns.resolver.NXDOMAIN:
-        raise dns.resolver.NXDOMAIN(f"NXDOMAIN for domain {name} in record type {record}.")
+        raise BackupResolverError(f"NXDOMAIN for domain {name} in record type {record}.")
     except dns.resolver.NoAnswer:
         raise BackupResolverError(f"NoAnswer for domain {name} in record type {record}.")
     except dns.exception.Timeout:
-        raise dns.exception.Timeout(f"MasterTimeout for domain {name} in backup resolver lookup.")
+        raise BackupResolverError(f"MasterTimeout for domain {name} in backup resolver lookup.")
 
 
 def get_dnssec_chain_count(lookup_res):
@@ -189,10 +169,11 @@ async def perform_ip_lookup(name, cache, rec_limit, res_all_glueless):
     '''Returns: (list[DNSResChain], list[DNSResChain])'''
 
     lookupv4 = await lookup_name_rec_helper(name, dns.rdatatype.A, cache, 
-                                      rec_limit, res_all_glueless)
+                                            rec_limit, res_all_glueless)
     try:
-        lookupv6 = await lookup_name_rec_helper(name, dns.rdatatype.AAAA, cache,
-                                          rec_limit, res_all_glueless)
+        lookupv6 = await lookup_name_rec_helper(name, dns.rdatatype.AAAA,
+                                                cache, rec_limit,
+                                                res_all_glueless)
     except Exception:
         lookupv6 = None
     return (lookupv4, lookupv6)
@@ -238,8 +219,8 @@ async def query_nameserver_async(name, record, ns_list, cache, rec_depth, max_co
             # Try a glueless lookup. If failed, do not use nameserver.
             else:
                 try:
-                    ns_lookups = await perform_ip_lookup(ns_name, cache, rec_depth - 1,
-                        True)
+                    ns_lookups = await perform_ip_lookup(ns_name, cache,
+                                                         rec_depth - 1, True)
                     ns_to_choose[ns_name] = ns_lookups
                     ip_or_lookup, ip_or_lookupv6 = ns_lookups
                 except ValueError:
@@ -307,7 +288,6 @@ async def lookup_name_rec_helper(name, record, cache,
         full_ns_lvl, valid_ns_with_resp = await query_nameserver_async(name, record,
                                               ns_to_search, cache, rec_limit)
 
-
         ns_query_end = time.time()
         ns_query_timer_accum += (ns_query_end - ns_query_start)
         full_ns = d2l(full_ns_lvl)
@@ -327,7 +307,8 @@ async def lookup_name_rec_helper(name, record, cache,
                 is_cname = (len(answer_rrset_list) == 0) and (len(answer_cname_rrset) > 0)
 
                 if not is_cname and len(answer_rrset_list) == 0:
-                    raise ValueError("NoAnswer and different response from backup resolver for domain {}".format(name))
+                    err_code = dns.rcode.to_text(dns.rcode.from_flags(int(resp.flags) , resp.ednsflags))
+                    raise ValueError(f"NoAnswer (and possibly different response from backup resolver) for domain {name}; error code {err_code}")
 
                 answer_rrset = answer_rrset_list[0] if not is_cname else answer_cname_rrset[0]
 
@@ -357,8 +338,8 @@ async def lookup_name_rec_helper(name, record, cache,
             else:
                 ns_rr_sets = [a for a in resp.authority if a.rdtype == dns.rdatatype.NS]
                 if len(ns_rr_sets) == 0:
-
-                    raise ValueError(f"NoAnswer and different response from backup resolver for domain {name}.")
+                    err_code = dns.rcode.to_text(dns.rcode.from_flags(int(resp.flags) , resp.ednsflags))
+                    raise ValueError(f"NoAnswer (and possibly different response from backup resolver) for domain {name}; error code {err_code}")
                 
                 ns_group = ns_rr_sets[0]
 
@@ -417,16 +398,31 @@ async def lookup_name_rec_helper(name, record, cache,
     return lookup_results
 
 
+async def full_lookup_with_timelimit(name, record, cache, timeout):
+
+    cache_dupl = copy.deepcopy(cache)
+    try:
+        print(f'starting glued lookup for {name} {record}')
+        is_full_graph = True
+        lookup = await asyncio.wait_for(lookup_name_rec_helper(name, record, cache,
+                                        res_all_glueless=True), timeout=timeout)
+    except asyncio.TimeoutError:
+        print(f'retrying with glueless for {name} {record}')
+        is_full_graph = False
+        lookup = await asyncio.wait_for(lookup_name_rec_helper(name, record, cache_dupl,
+                                        res_all_glueless=False), timeout=timeout)
+
+    return (lookup, is_full_graph)
+
+
 async def lookup_name_rec_cached(name, record, cname_chain_count, 
                                  cache, res_all_glueless):
-    # print(f"lookup for name {name} with record {record} and cache {cache.keys()}")
 
-    backup_res_resp = await lookup_backup_async(name, record)
+    ts = datetime.datetime.now().astimezone()
+    backup_lookup = lookup_backup_async(name, record)
+    full_lookup = full_lookup_with_timelimit(name, record, cache, 10)
 
-    lookups = await lookup_name_rec_helper(name, record, {})
-    results = [lkup for lkup in lookups]
-
-    return DNSLookup(results, backup_res_resp, record)
+    return ts, await asyncio.gather(backup_lookup, full_lookup, return_exceptions=True)
 
 
 def get_full_dns_target_ip_list(lookup_result):
@@ -459,171 +455,76 @@ def get_full_dns_target_ip_list(lookup_result):
     return (list(set(ip_list)), list(set(ipv6_list)))
 
 
-# Returns full list of IPs that could be hijacked.
-# Used to calculate attack viability probability.
-# Deprecated: AAAA records need to be looked up separately to support IPv6.
-def get_full_targ_ip_list(name, record, include_a_recs):
-    if include_a_recs:
-        if record != dns.rdatatype.A:
-            raise ValueError("Requested inclusion of A records in target IP list but query was for other record type.", record)
-        lookup_res = lookup_name(name, record)
-        (res, resv6) = get_full_dns_target_ip_list(lookup_res)
-        res.extend(get_all_hostname_addr_from_res_chain(lookup_res)[0])
-        return (list(set(res)), resv6)
-    else:
-        return get_full_dns_target_ip_list(lookup_name(name, record))
+async def collector(name, rec_type, iters, res_all_glueless=True):
 
-
-# Returns list of hijackable IPs that the resolver actually contacted.
-# Used to calculate false positive rates.
-def get_partial_dns_targ_ip_list(lookup_res):
-    ip_list = []
-    for cname_lkup in lookup_res:
-        dnssec_count = get_dnssec_chain_count(cname_lkup) # cname_lookup.dnssec_count
-        nserver_list = cname_lkup.ns_chain
-        for zone_idx in range(dnssec_count, len(nserver_list)):
-            (ns_name, ns_ip) = nserver_list[zone_idx]
-            ip_list.append(ns_ip)
-    return (ip_list, [])
-
-
-def get_targ_partial_ip_list(name, record, include_a_rec):
-
-    if include_a_rec:
-        if record != dns.rdatatype.A:
-            raise ValueError("Requested inclusion of A records in target IP list but query was for other record type.", record)
-        lookup_res = lookup_name(name, record)
-        (res, resv6) = get_partial_dns_targ_ip_list(lookup_res)
-        res.append(get_hostname_addr_from_res_chain(lookup_res))
-        return (res, resv6)
-    else:
-        return get_partial_dns_targ_ip_list(lookup_name(name, record))
-
-
-async def collector(name, rec_type, iters=10):
-
-    lkups = [lookup_name(name, rec_type) for _ in range(iters)]
+    lkups = [lookup_name(name, rec_type, res_all_glueless=res_all_glueless) for _ in range(iters)]
     res = await asyncio.gather(*lkups, return_exceptions=True)
     return res
 
 
-def perform_full_name_lookup_batched(name, num_retries=1):
+def format_lookup_json(lookup, name, rtype):
 
-    resps_v4 = asyncio.run(collector(name, dns.rdatatype.A, num_retries))
-    resps_v6 = asyncio.run(collector(name, dns.rdatatype.AAAA, num_retries))
-    ret = []
+    ts, (backup_lookup, iter_lookup) = lookup
 
-    for lookup_v4, lookup_v6 in zip(resps_v4, resps_v6):
-        lookup_dict = {}
-        a_records = []
-        aaaa_records = []
-        a_ttl = 0
-        aaaa_ttl = 0
+    lookup_json = {}
+    lookup_json["ts"] = str(ts)
 
-        dns_targ_ipv4 = []
-        dns_targ_ipv6 = []
+    if isinstance(backup_lookup, BackupResolverError):
+        lookup_json["match_backup"] = True
+        lookup_json["backup_error_msg"] = type(backup_lookup).__name__ + ": " + str(backup_lookup)
 
-        backup_resp_ipv4 = None
-        backup_resp_ipv6 = None
-        backup_resp_a_records = []
-        backup_resp_a_ttl = 0
-        backup_resp_aaaa_records = []
-        backup_resp_aaaa_ttl = 0
+    else:
+        lookup_json["backup_resp"] = backup_lookup
+        if (rtype == dns.rdatatype.A) or (rtype == dns.rdatatype.AAAA):
+            lookup_obj = DNSLookup(None, backup_lookup, rtype)
+            backup_resp_records, backup_resp_ttl = lookup_obj.get_backup_ip_addrs()
+            lookup_json["backup_resp_records"] = backup_resp_records
+            lookup_json["backup_resp_ttl"] = backup_resp_ttl
+        elif (rtype == dns.rdatatype.SOA):
+            ans_rrset = filt(backup_lookup.answer, dns.rdatatype.SOA)[0]
+            lookup_json["backup_resp_serial"] = [_.serial for _ in ans_rrset]
+            lookup_json["backup_resp_ttl"] = ans_rrset.ttl
+            lookup_json["backup_resp_mname"] = [str(_.mname) for _ in ans_rrset]
 
-        match_backup_resv4 = False
-        match_backup_resv6 = False
+    if isinstance(iter_lookup, Exception):
+        exc_msg = ": " + str(iter_lookup) if len(str(iter_lookup)) > 0 else ""
+        lookup_json["error_msg"] = type(iter_lookup).__name__ + exc_msg
+    else:
+        full_lookup, full_graph = iter_lookup
+        lookup_json["full_lookup"] = full_lookup
+        lookup_json["full_graph"] = full_graph
+        if (rtype == dns.rdatatype.A) or (rtype == dns.rdatatype.AAAA):
+            records, ttl = get_all_hostname_addr_from_res_chain(full_lookup)
+            (lookup_dns_ipv4, lookup_dns_ipv6) = get_full_dns_target_ip_list(full_lookup)
+            lookup_json["records"] = records
+            lookup_json["ttl"] = ttl
+            lookup_json["lookup_dns_ipv4"] = lookup_dns_ipv4
+            lookup_json["lookup_dns_ipv6"] = lookup_dns_ipv6
+        elif (rtype == dns.rdatatype.SOA):
+            ans_rrset = full_lookup[-1].answer_rrset
+            lookup_json["serial"] = [_.serial for _ in ans_rrset]
+            lookup_json["ttl"] = ans_rrset.ttl
+            lookup_json["mname"] = [str(_.mname) for _ in ans_rrset]
 
-        lookup4_dns_ipv4 = []
-        lookup4_dns_ipv6 = []
-        lookup6_dns_ipv4 = []
-        lookup6_dns_ipv6 = []
+    return lookup_json
 
-        full_graphv4 = False
-        full_graphv6 = False
 
-        fulllookup_v4 = None
-        fulllookup_v6 = None
+def lookup_full_name_batched(name, record_types_with_rtries):
+    start = time.perf_counter()
 
-        if isinstance(lookup_v4, BackupResolverError):
-            match_backup_resv4 = True
-            full_graphv4 = True
+    ret = {}
 
-        elif isinstance(lookup_v4, asyncio.TimeoutError):
-        # elif isinstance(lookup_v4, dns.exception.Timeout):
-            try:
-                lookup_v4 = asyncio.run(lookup_name(name, dns.rdatatype.A, res_all_glueless=False))
-                fulllookup_v4 = lookup_v4.lookup
-                backup_resp_ipv4 = lookup_v4.backup_lookup
-                backup_resp_a_records, backup_resp_a_ttl = lookup_v4.get_backup_ip_addrs()
-                a_records, a_ttl = get_all_hostname_addr_from_res_chain(fulllookup_v4)
-                (lookup4_dns_ipv4, lookup4_dns_ipv6) = get_full_dns_target_ip_list(fulllookup_v4)
-            except BackupResolverError:
-                match_backup_resv4 = True
-            except Exception as e:
-                ret.append(e)
-                continue
+    for rec, num_retries in record_types_with_rtries.items():
+        rtype = dns.rdatatype.from_text(rec)
+        resps = asyncio.run(collector(name, rtype, num_retries))
+        num_timeout = sum(isinstance(_, asyncio.TimeoutError) for _ in resps)
+        lookups = []
+        for lookup in resps:
+            lookups.append(format_lookup_json(lookup, name, rtype))
+        ret[rec] = lookups
 
-        elif isinstance(lookup_v4, Exception):
-            ret.append(lookup_v4)
-            continue
-
-        else:
-            fulllookup_v4 = lookup_v4.lookup
-            backup_resp_ipv4 = lookup_v4.backup_lookup
-            backup_resp_a_records, backup_resp_a_ttl = lookup_v4.get_backup_ip_addrs()
-            a_records, a_ttl = get_all_hostname_addr_from_res_chain(fulllookup_v4)
-            (lookup4_dns_ipv4, lookup4_dns_ipv6) = get_full_dns_target_ip_list(fulllookup_v4)
-            full_graphv4 = True
-
-        if isinstance(lookup_v6, BackupResolverError) or isinstance(lookup_v6, dns.resolver.NXDOMAIN):
-            match_backup_resv6 = True
-            full_graphv6 = True
-
-        elif isinstance(lookup_v6, asyncio.TimeoutError):
-            try:
-                lookup_v6 = asyncio.run(lookup_name(name, dns.rdatatype.AAAA, res_all_glueless=False))
-                fulllookup_v6 = lookup_v6.lookup
-                backup_resp_ipv6 = lookup_v6.backup_lookup
-                backup_resp_aaaa_records, backup_resp_aaaa_ttl = lookup_v6.get_backup_ip_addrs()
-                aaaa_records, aaaa_ttl = get_all_hostname_addr_from_res_chain(lookup_v6.lookup)
-                (lookup6_dns_ipv4, lookup6_dns_ipv6) = get_full_dns_target_ip_list(lookup_v6.lookup)
-            except BackupResolverError:
-                match_backup_resv6 = True
-            except Exception as e:
-                ret.append(e)
-                continue
-
-        elif isinstance(lookup_v6, Exception):
-            ret.append(lookup_v6)
-            continue
-
-        else:
-            fulllookup_v6 = lookup_v6.lookup
-            backup_resp_ipv6 = lookup_v6.backup_lookup
-            backup_resp_aaaa_records, backup_resp_aaaa_ttl = lookup_v6.get_backup_ip_addrs()
-            aaaa_records, aaaa_ttl = get_all_hostname_addr_from_res_chain(lookup_v6.lookup)
-            (lookup6_dns_ipv4, lookup6_dns_ipv6) = get_full_dns_target_ip_list(lookup_v6.lookup)
-            full_graphv6 = True
-
-        dns_targ_ipv4 = list(set(lookup4_dns_ipv4 + lookup6_dns_ipv4))
-        dns_targ_ipv6 = list(set(lookup4_dns_ipv6 + lookup6_dns_ipv6))      
-  
-        lookup_dict["a_records"] = a_records, a_ttl
-        lookup_dict["aaaa_records"] = aaaa_records, aaaa_ttl
-        lookup_dict["dns_targ_ipv4"] = dns_targ_ipv4
-        lookup_dict["dns_targ_ipv6"] = dns_targ_ipv6
-        lookup_dict["match_backup_resv4"] = match_backup_resv4
-        lookup_dict["match_backup_resv6"] = match_backup_resv6
-        lookup_dict["backup_resolver_resp_ipv4"] = backup_resp_ipv4
-        lookup_dict["backup_resolver_resp_ipv6"] = backup_resp_ipv6
-        lookup_dict["backup_resolver_a_records"] = backup_resp_a_records, backup_resp_a_ttl
-        lookup_dict["backup_resolver_aaaa_records"] = backup_resp_aaaa_records, backup_resp_aaaa_ttl
-        lookup_dict["is_full_graphv4"] = full_graphv4
-        lookup_dict["is_full_graphv6"] = full_graphv6
-        lookup_dict["lookup_ipv4"] = fulllookup_v4
-        lookup_dict["lookup_ipv6"] = fulllookup_v6
-
-        ret.append(lookup_dict)
+    elapsed = time.perf_counter() - start
+    print(f'Total time elapsed: {elapsed: .4f} seconds.')
 
     return ret
 
