@@ -81,6 +81,7 @@ ROOT_SERVER_IP_DICT = l2d(ROOT_SERVER_IP_LIST)
 BACKUP_RESOLVER_IP_LIST = ["127.0.0.1"]
 DEFAULT_REC_LIM = 30
 DEFAULT_CNAME_CHAIN_LIM = 8
+LOOKUP_TIME_LMT = 10
 
 DNSResChain = namedtuple("DNSResChain", ["ns_chain", "full_ns_chain", 
                                          "zonelist", "dnssec_chain", 
@@ -401,18 +402,32 @@ async def lookup_name_rec_helper(name, record, cache,
 async def full_lookup_with_timelimit(name, record, cache, timeout):
 
     cache_dupl = copy.deepcopy(cache)
+    tasks = []
     try:
-        print(f'starting glued lookup for {name} {record}')
-        is_full_graph = True
-        lookup = await asyncio.wait_for(lookup_name_rec_helper(name, record, cache,
-                                        res_all_glueless=True), timeout=timeout)
-    except asyncio.TimeoutError:
-        print(f'retrying with glueless for {name} {record}')
-        is_full_graph = False
-        lookup = await asyncio.wait_for(lookup_name_rec_helper(name, record, cache_dupl,
-                                        res_all_glueless=False), timeout=timeout)
+        try:
+            print(f'starting glued lookup for {name} {record}')
+            is_full_graph = True
+            tsk = asyncio.create_task(lookup_name_rec_helper(name, record, cache,
+                                                             res_all_glueless=True)) 
+            tasks.append(tsk)
+            lookup = await asyncio.wait_for(tsk, timeout=timeout)
+            return (lookup, is_full_graph)
 
-    return (lookup, is_full_graph)
+        except asyncio.TimeoutError:
+            print(f'retrying with glueless for {name} {record}')
+            is_full_graph = False
+            glueless_tsk = asyncio.create_task(lookup_name_rec_helper(name, record, cache_dupl,
+                                                                      res_all_glueless=False))
+            tasks.append(glueless_tsk)
+            lookup = await asyncio.wait_for(glueless_tsk, timeout=timeout)
+            return (lookup, is_full_graph)
+
+    except Exception as e:
+        exceptions = [t.exception() for t in tasks if t.exception()]
+        if len(exceptions) > 0:
+            raise exceptions[-1]
+        else:  # case of a second timeout error
+            raise e
 
 
 async def lookup_name_rec_cached(name, record, cname_chain_count, 
@@ -420,7 +435,7 @@ async def lookup_name_rec_cached(name, record, cname_chain_count,
 
     ts = datetime.datetime.now().astimezone()
     backup_lookup = lookup_backup_async(name, record)
-    full_lookup = full_lookup_with_timelimit(name, record, cache, 10)
+    full_lookup = full_lookup_with_timelimit(name, record, cache, LOOKUP_TIME_LMT)
 
     return ts, await asyncio.gather(backup_lookup, full_lookup, return_exceptions=True)
 
@@ -453,6 +468,10 @@ def get_full_dns_target_ip_list(lookup_result):
                     ipv6_list.extend(get_all_hostname_addr_from_res_chain(ns_ip_lkupv6)[0])
               
     return (list(set(ip_list)), list(set(ipv6_list)))
+
+
+async def lookup_name(name, record_type, rec_limit=10, res_all_glueless=True):
+    return await lookup_name_rec_cached(name, record_type, rec_limit, {}, res_all_glueless)
 
 
 async def collector(name, rec_type, iters, res_all_glueless=True):
