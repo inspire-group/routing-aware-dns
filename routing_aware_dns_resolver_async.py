@@ -295,8 +295,9 @@ async def lookup_name_rec_helper(name, record, cache,
 
         for (ns_name, ns, _, resp) in valid_ns_with_resp:
 
-            has_dnssec = any(filt(resp.authority, dns.rdatatype.DS))
-            new_dnssec_chain = lookup_res.dnssec_chain + [has_dnssec]
+            new_dnssec_chain = lookup_res.dnssec_chain[:]
+            if len(filt(resp.authority, dns.rdatatype.NS)) > 0:
+                new_dnssec_chain.append(any(filt(resp.authority, dns.rdatatype.DS)))
 
             new_ns_chain = lookup_res.ns_chain + [(ns_name, get_ip_from_lookup(ns))]
             new_full_ns_chain = lookup_res.full_ns_chain + [full_ns]
