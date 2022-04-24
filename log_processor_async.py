@@ -152,7 +152,7 @@ def process_daily_log(args):
     num_part = args.num_partitions
 
     logging.info(f'Performing {num_certs} lookups for log file {log_file} using seed {seed} for partition {part} of {num_part}')
-    session = boto3.Session(profile_name='dns_res')
+    session = boto3.Session()
     m = mp.Manager()  # TODO: enable multiprocessing with a flag
 
     read_log_from_bucket(session, log_file)
