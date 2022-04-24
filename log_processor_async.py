@@ -151,15 +151,19 @@ def process_daily_log(args):
     part = args.partition
     num_part = args.num_partitions
 
-    logging.info(f'Performing lookups for log file {log_file}')
-    session = boto3.Session()
+    logging.info(f'Performing {num_certs} lookups for log file {log_file} using seed {seed} for partition {part} of {num_part}')
+    session = boto3.Session(profile_name='dns_res')
     m = mp.Manager()  # TODO: enable multiprocessing with a flag
 
     read_log_from_bucket(session, log_file)
     certs = parse(log_file, num_certs, seed, (part, num_part))
     lookup_res = resolve_dns(m, certs)
 
-    write_logs_to_bucket(session, log_file, part)
+    if not args.no_upload:
+        print('Upload flag set to false; lookup results local only')
+    else:
+        write_logs_to_bucket(session, log_file, part)
+
     return 0
 
 
@@ -207,6 +211,7 @@ def get_lookups(id_, urls, soa_enabled=False):
                     summ_accum.append(each_lookup)
                 successful += succ_ct
                 failed += fail_ct
+                print(f'{fail_ct} failed for domain {url} rtype {rec_type}')
                 domain_smry[rec_type] = summ_accum
                 domain_full_lookups[rec_type] = full_accum
                 
@@ -332,6 +337,8 @@ if __name__ == '__main__':
                         help="Partition number for this process.")
     parser.add_argument("-s", "--seed", type=int, default=date.today().toordinal(),
                         help="Random seed for sampling certs.")
+    parser.add_argument("--no-upload", action='store_false',
+                        help="Upload lookup results to AWS S3 bucket.")
     args = parser.parse_args()
 
     result = process_daily_log(args)
