@@ -1,12 +1,12 @@
 # log processing script
-
+import os
+os.environ['PYTHONASYNCIODEBUG'] = '1'
 import boto3
 import botocore
 from datetime import date, datetime
 import gzip
 import lz4.frame
 import json
-import multiprocessing as mp
 import os
 from pathlib import Path
 import pickle
@@ -153,11 +153,10 @@ def process_daily_log(args):
 
     logging.info(f'Performing {num_certs} lookups for log file {log_file} using seed {seed} for partition {part} of {num_part}')
     session = boto3.Session()
-    m = mp.Manager()  # TODO: enable multiprocessing with a flag
 
     read_log_from_bucket(session, log_file)
     certs = parse(log_file, num_certs, seed, (part, num_part))
-    lookup_res = resolve_dns(m, certs)
+    lookup_res = resolve_dns(certs)
 
     if not args.no_upload:
         print('Upload flag set to false; lookup results local only')
@@ -227,22 +226,29 @@ def get_lookups(id_, urls, soa_enabled=False):
     return (lookup_result, successful, failed)
 
 
-def worker(in_q, out_q):
+def worker(cert):
     # in_q: list of certificates that need to be looked up
     # out_q: threadsafe queue to contain lookup results
-    name = os.getpid()
-    successful = 0
-    failed = 0
     start = time.time()
-    for cert in in_q:
-        cert_id, cert_urls, le_ts = cert
-        lookup, succ_lkup, fail_lkup = get_lookups(cert_id, cert_urls)
-        successful += succ_lkup
-        failed += fail_lkup
-        out_q.put((lookup, le_ts))
+    cert_id, cert_urls, le_ts = cert
+    lookup, successful, failed = get_lookups(cert_id, cert_urls)
     end = time.time()
-    print(f'Time for {name} to perform {successful + failed} lookups: {(end-start):.4f} sec.')
-    return (successful, failed)
+    print(f'Time to perform {successful + failed} lookups: {(end-start):.4f} sec.')
+    return ((lookup, le_ts), successful, failed)
+
+
+def write_output(msg, lookup_f, archive_f):
+
+    lookup, le_ts = msg
+    stats = {"ID": lookup["ID"], "le_ts": le_ts, 
+             "summary": lookup["summary"],
+             "wildcards_skipped": lookup["wildcards_skipped"]}
+    full_graph = {"ID": lookup["ID"], "le_ts": le_ts, 
+                  "full": lookup["full"]}
+    lookup_f.write(json.dumps(stats) + '\n')
+    lookup_f.flush()
+    pickle.dump(full_graph, archive_f, pickle.HIGHEST_PROTOCOL)
+    archive_f.flush()
 
 
 def listener(write_q):
@@ -283,34 +289,19 @@ def split(a, n):
     return (a[i*k+min(i, m):(i+1)*k+min(i+1, m)] for i in range(n))
 
 
-def resolve_dns(manager, cert_q):
+def resolve_dns(cert_q):
 
     start = time.time()
 
-    max_proc = mp.cpu_count() + 1
+    lookups_success = 0
+    lookups_failed = 0
+    with open(RES_FILE, "a") as lookup_f, gzip.open(FULL_LKUP_FILE, "wb") as archive_f:
+        for cert in cert_q:
+            lookup, succ, fail = worker(cert)
+            write_output(lookup, lookup_f, archive_f)
+            lookups_success += succ
+            lookups_failed += fail
 
-    pool = mp.Pool(max_proc)
-    lookup_q = manager.Queue()
-
-    num_writers = 1
-    num_workers = max_proc - num_writers
-
-    watcher = pool.apply_async(listener, (lookup_q,))
-
-    cert_chunks = list(split(cert_q, num_workers))
-    jobs = [pool.apply_async(worker, (cert_chunks[w], lookup_q)) for w in range(num_workers)]
-
-    all_lookups = []
-    for job in jobs:
-        all_lookups.append(job.get())
-
-    lookups_success, lookups_failed = [sum(i) for i in zip(*all_lookups)]
-
-    lookup_q.put('end')
-    watcher.get()
-
-    pool.close()
-    pool.join()
     end = time.time()
     tot = lookups_success + lookups_failed
 
@@ -319,7 +310,6 @@ def resolve_dns(manager, cert_q):
 
     print(f'All the lookups done: {lookups_success} successful {lookups_failed} failed')
     print(f'Time for all tasks to finish ({len(cert_q)} certificate lookups): {(end-start):.4f}')
-    return all_lookups
 
 
 if __name__ == '__main__':

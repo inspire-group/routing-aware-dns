@@ -124,10 +124,6 @@ def lookup_a_rec(name):
     return lookup_name(name, dns.rdatatype.A)
 
 
-async def lookup_name(name, record_type, rec_limit=10, res_all_glueless=True):
-    return await lookup_name_rec_cached(name, record_type, rec_limit, {}, res_all_glueless)
-
-
 class BackupResolverError(Exception):
 
     def __init__(self, message):
@@ -279,16 +275,15 @@ async def lookup_name_rec_helper(name, record, cache,
 
     lookup_results = []
     ns_query_timer_accum = 0
-    while len(stack) > 0:
+    max_tree_depth = 10
+    while len(stack) > 0 and max_tree_depth > 0:
         # first step: choose a nameserver to query for the first level record
         # store on stack: (dnslookup result obj, stack of nameservers to search)
         lookup_res, ns_to_search = stack.pop()
         
         ns_query_start = time.time()
-
         full_ns_lvl, valid_ns_with_resp = await query_nameserver_async(name, record,
                                               ns_to_search, cache, rec_limit)
-
         ns_query_end = time.time()
         ns_query_timer_accum += (ns_query_end - ns_query_start)
         full_ns = d2l(full_ns_lvl)
@@ -392,6 +387,7 @@ async def lookup_name_rec_helper(name, record, cache,
                                          new_dnssec_chain, resp)
 
                 stack.append((interm_res, new_ns_level))
+                max_tree_depth -= 1
 
     end = time.time()
     # perc_ns_query_time = ns_query_timer_accum / (end - start)
@@ -408,23 +404,19 @@ async def full_lookup_with_timelimit(name, record, cache, timeout):
         try:
             print(f'starting glued lookup for {name} {record}')
             is_full_graph = True
-            tsk = asyncio.create_task(lookup_name_rec_helper(name, record, cache,
-                                                             res_all_glueless=True)) 
-            tasks.append(tsk)
-            lookup = await asyncio.wait_for(tsk, timeout=timeout)
+            lookup = await lookup_name_rec_helper(name, record, cache, res_all_glueless=True)
+            is_full_graph = True
             return (lookup, is_full_graph)
 
-        except asyncio.TimeoutError:
+        except dns.exception.Timeout:
             print(f'retrying with glueless for {name} {record}')
             is_full_graph = False
-            glueless_tsk = asyncio.create_task(lookup_name_rec_helper(name, record, cache_dupl,
-                                                                      res_all_glueless=False))
-            tasks.append(glueless_tsk)
-            lookup = await asyncio.wait_for(glueless_tsk, timeout=timeout)
-            return (lookup, is_full_graph)
+            glueless_lookup = await lookup_name_rec_helper(name, record, cache_dupl, res_all_glueless=False)
+            return (glueless_lookup, is_full_graph)
 
     except Exception as e:
-        exceptions = [t.exception() for t in tasks if t.exception()]
+        raise e
+        exceptions = [t.exception() for t in tasks if not t.cancelled() and t.exception()]
         if len(exceptions) > 0:
             raise exceptions[-1]
         else:  # case of a second timeout error
@@ -475,11 +467,23 @@ async def lookup_name(name, record_type, rec_limit=10, res_all_glueless=True):
     return await lookup_name_rec_cached(name, record_type, rec_limit, {}, res_all_glueless)
 
 
-async def collector(name, rec_type, iters, res_all_glueless=True):
+async def collector(name, rec_type_dict, res_all_glueless=True):
 
-    lkups = [lookup_name(name, rec_type, res_all_glueless=res_all_glueless) for _ in range(iters)]
-    res = await asyncio.gather(*lkups, return_exceptions=True)
-    return res
+    jobs = []
+    rtypes = list(rec_type_dict.keys())
+    for rtype in rtypes:
+        reps = rec_type_dict[rtype]
+        tasks = [lookup_name(name, dns.rdatatype.from_text(rtype), res_all_glueless=res_all_glueless) for _ in range(reps)]
+        jobs.extend(tasks)
+    res = await asyncio.gather(*jobs, return_exceptions=True)
+    repack = {}
+    idx = 0
+    for i, rtype in enumerate(rtypes):
+        reps = rec_type_dict[rtype]
+        lookups = res[idx: idx + reps]
+        repack[rtype] = lookups
+        idx += reps
+    return repack
 
 
 def format_lookup_json(lookup, name, rtype):
@@ -506,7 +510,7 @@ def format_lookup_json(lookup, name, rtype):
             lookup_json["backup_resp_ttl"] = ans_rrset.ttl
             lookup_json["backup_resp_mname"] = [str(_.mname) for _ in ans_rrset]
 
-    if isinstance(iter_lookup, Exception):
+    if isinstance(iter_lookup, Exception) or isinstance(iter_lookup, asyncio.CancelledError):
         exc_msg = ": " + str(iter_lookup) if len(str(iter_lookup)) > 0 else ""
         lookup_json["error_msg"] = type(iter_lookup).__name__ + exc_msg
     else:
@@ -532,21 +536,18 @@ def format_lookup_json(lookup, name, rtype):
 def lookup_full_name_batched(name, record_types_with_rtries):
     start = time.perf_counter()
 
-    ret = {}
-
-    for rec, num_retries in record_types_with_rtries.items():
-        rtype = dns.rdatatype.from_text(rec)
-        resps = asyncio.run(collector(name, rtype, num_retries))
-        num_timeout = sum(isinstance(_, asyncio.TimeoutError) for _ in resps)
-        lookups = []
-        for lookup in resps:
-            lookups.append(format_lookup_json(lookup, name, rtype))
-        ret[rec] = lookups
+    ret_d = {}
+    ret = asyncio.run(collector(name, record_types_with_rtries))
+    for k, v in ret.items():
+        ls = []
+        for l in v:
+            ls.append(format_lookup_json(l, name, dns.rdatatype.from_text(k)))
+        ret_d[k] = ls
 
     elapsed = time.perf_counter() - start
     print(f'Total time elapsed: {elapsed: .4f} seconds.')
 
-    return ret
+    return ret_d
 
 
 if __name__ == "__main__":
