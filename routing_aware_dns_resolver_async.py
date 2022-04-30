@@ -334,10 +334,16 @@ async def lookup_name_rec_helper(name, record, cache,
             # logic for authority records
             else:
                 ns_rr_sets = [a for a in resp.authority if a.rdtype == dns.rdatatype.NS]
+                searched_ns_names = [_[0] for _ in ns_to_search]
+                new_ns_names = sum([[rec.target.to_text() for rec in rrset] for rrset in ns_rr_sets], [])
+
                 if len(ns_rr_sets) == 0:
                     err_code = dns.rcode.to_text(dns.rcode.from_flags(int(resp.flags) , resp.ednsflags))
                     raise ValueError(f"NoAnswer (and possibly different response from backup resolver) for domain {name}; error code {err_code}")
-                
+                # infinite looping case, where authority doesn't provide requested records in ans
+                elif set(new_ns_names).issubset(set(searched_ns_names)):
+                    raise ValueError(f"NoAnswer (and possibly different response from backup resolver) for domain {name}; infinite recursion auth")
+
                 ns_group = ns_rr_sets[0]
 
                 new_zonelist = lookup_res.zonelist + [ns_group.name]
