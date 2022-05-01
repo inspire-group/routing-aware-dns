@@ -530,7 +530,7 @@ def format_lookup_json(lookup, name, rtype):
             lookup_json["ttl"] = ttl
             lookup_json["lookup_dns_ipv4"] = lookup_dns_ipv4
             lookup_json["lookup_dns_ipv6"] = lookup_dns_ipv6
-        elif (rtype == dns.rdatatype.SOA):
+        elif (rtype == dns.rdatatype.SOA) and len(full_lookup) > 0:
             ans_rrset = full_lookup[-1].answer_rrset
             lookup_json["serial"] = [_.serial for _ in ans_rrset]
             lookup_json["ttl"] = ans_rrset.ttl
