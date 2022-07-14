@@ -38,16 +38,40 @@ def main(args):
 				domain_target_dns_ips_v6 = set()
 				domain_target_aaaa_ips = set()
 				lookups = summary_object[domain]
-				if len(lookups) > repetative_lookup_count:
-					lookups = lookups[:repetative_lookup_count]
-				for lookup in lookups:
-					lookup_info = lookup[1] # The first element is the timestamp, so we want to lookup info in element 2.
-					if isinstance(lookup_info, str): # This is the case where the lookup is an error, we should continue.
-						continue
-					domain_target_a_ips = domain_target_a_ips.union(set(lookup_info["a_records"][0]))
-					domain_target_dns_ips = domain_target_dns_ips.union(set(lookup_info["dns_targ_ipv4"]))
-					domain_target_aaaa_ips = domain_target_aaaa_ips.union(set(lookup_info["aaaa_records"][0]))
-					domain_target_dns_ips_v6 = domain_target_dns_ips_v6.union(set(lookup_info["dns_targ_ipv6"]))
+				# This is where the old and new formats diverge.
+				if isinstance(lookups, dict):
+					# We are in the new format.
+					aLookups = lookups['A']
+					if len(aLookups) > repetative_lookup_count:
+						aLookups = aLookups[:repetative_lookup_count]
+					for aLookup in aLookups:
+						if 'error_msg' in aLookup:
+							continue # Skip over lookup errors.
+						domain_target_a_ips = domain_target_a_ips.union(set(aLookup["records"]))
+						domain_target_dns_ips = domain_target_dns_ips.union(set(aLookup["lookup_dns_ipv4"]))
+						domain_target_dns_ips_v6 = domain_target_dns_ips_v6.union(set(aLookup["lookup_dns_ipv6"]))
+					
+					aaaaLookups = lookups['AAAA']
+					if len(aaaaLookups) > repetative_lookup_count:
+						aaaaLookups = aaaaLookups[:repetative_lookup_count]
+					for aaaaLookup in aaaaLookups:
+						if 'error_msg' in aaaaLookup:
+							continue # Skip over lookup errors.
+						domain_target_aaaa_ips = domain_target_aaaa_ips.union(set(aaaaLookup["records"]))
+						domain_target_dns_ips = domain_target_dns_ips.union(set(aaaaLookup["lookup_dns_ipv4"]))
+						domain_target_dns_ips_v6 = domain_target_dns_ips_v6.union(set(aaaaLookup["lookup_dns_ipv6"]))
+				else:
+					# We are in the old format.
+					if len(lookups) > repetative_lookup_count:
+						lookups = lookups[:repetative_lookup_count]
+					for lookup in lookups:
+						lookup_info = lookup[1] # The first element is the timestamp, so we want to lookup info in element 2.
+						if isinstance(lookup_info, str): # This is the case where the lookup is an error, we should continue.
+							continue
+						domain_target_a_ips = domain_target_a_ips.union(set(lookup_info["a_records"][0]))
+						domain_target_dns_ips = domain_target_dns_ips.union(set(lookup_info["dns_targ_ipv4"]))
+						domain_target_aaaa_ips = domain_target_aaaa_ips.union(set(lookup_info["aaaa_records"][0]))
+						domain_target_dns_ips_v6 = domain_target_dns_ips_v6.union(set(lookup_info["dns_targ_ipv6"]))
 				print(f"{domain},{vantagePoint},{' '.join(domain_target_a_ips)},{' '.join(domain_target_aaaa_ips)},{' '.join(domain_target_dns_ips)},{' '.join(domain_target_dns_ips_v6)}")
 
 

@@ -17,7 +17,7 @@ def parse_args():
     parser.add_argument("-d", "--certs_csv_2",
                         default="./certs-2.csv")
     parser.add_argument("-m", "--match_domains",
-                        default="false")
+                        default=False, action='store_const', const=True)
     return parser.parse_args()
 
 class DomainMismatchError(Exception):
@@ -33,7 +33,7 @@ def mergeLines(sline1, sline2):
 	return ",".join(outLine)
 
 def main(args):
-	if args.match_domains == "true":
+	if args.match_domains:
 		csv1Dict = {}
 		for line in open(args.certs_csv_1):
 			sline = line.strip()
