@@ -88,6 +88,14 @@ DNSResChain = namedtuple("DNSResChain", ["ns_chain", "full_ns_chain",
                                          "answer_rrset"])
 
 
+def has_answer(res_chain, rtype):
+    if res_chain is not None and len(res_chain) > 0:
+        valid_ans = [_.answer_rrset for _ in res_chain if (_.answer_rrset.rdtype == rtype)]
+        return len(valid_ans) > 0
+    else:
+        return False
+
+
 def get_hostname_addr_from_res_chain(res_chain):
 
     answer_rrset = res_chain[-1].answer_rrset
@@ -108,6 +116,8 @@ def get_all_hostname_addr_from_res_chain(res_chain):
     if res_chain is not None and len(res_chain) > 0:
         try:
             answer_rrset = res_chain[-1].answer_rrset
+            valid_answers = [_.answer_rrset for _ in res_chain if (_.answer_rrset.rdtype == dns.rdatatype.A or _.answer_rrset.rdtype == dns.rdatatype.AAAA)]
+            answer_rrset = valid_answers[-1]
             for ans in answer_rrset:
                 res.append(ans.address)
             ttl = answer_rrset.ttl
@@ -521,6 +531,10 @@ def format_lookup_json(lookup, name, rtype):
         lookup_json["error_msg"] = type(iter_lookup).__name__ + exc_msg
     else:
         full_lookup, full_graph = iter_lookup
+        if not has_answer(full_lookup, rtype):
+            print(f'Missing answer for {name} type {rtype}')
+            lookup_json["error_msg"] = "ValueError: The given result chain does not have a valid address. Maybe a lookup for the wrong record type " + str(full_lookup)
+            return lookup_json
         lookup_json["full_lookup"] = full_lookup
         lookup_json["full_graph"] = full_graph
         if (rtype == dns.rdatatype.A) or (rtype == dns.rdatatype.AAAA):
