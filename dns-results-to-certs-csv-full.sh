@@ -3,6 +3,7 @@
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 resultdir=$1
+targetdir=$2
 
 # This could be cleaner to use find with a flag to only inculde directories.
 # This glob should expand before the loop exectues so the output CSVs we write to the base dir should not matter.
@@ -17,8 +18,10 @@ done
 
 mv $resultdir/full-certs.no-wildcards.csv.tmp $resultdir/full-certs.no-wildcards.csv
 
+mv $resultdir/*-daily-certs.csv* $targetdir
 
+mv $resultdir/full-certs.no-wildcards.csv $targetdir
 
-
+# Do not remove the daily certs files.
 #rm $resultdir/*-daily-certs.csv.no-wildcards.csv
 #rm $resultdir/*-daily-certs.csv
