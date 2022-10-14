@@ -374,9 +374,9 @@ async def lookup_name_rec_helper(name, record, cache,
                                 # Else it might already be listed with an IPv6 record, iterate through the list, find the index and update the IPv4 record.
                                 (ipv4, ipv6) = glued_ns_ip_dict[g.name.to_text()]
                                 if g.rdtype == dns.rdatatype.A:
-                                    addr_v4.append(ns_addr.address)
+                                    ipv4.append(ns_addr.address)
                                 elif g.rdtype == dns.rdatatype.AAAA:
-                                    addr_v6.append(ns_addr.address)
+                                    ipv6.append(ns_addr.address)
                                 glued_ns_ip_dict[g.name.to_text()] = (addr_v4, addr_v6)
 
                 glueless_ns_list = [_ for _ in all_ns_list if _ not in glued_ns_ip_dict]
