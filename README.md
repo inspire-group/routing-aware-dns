@@ -1,2 +1,2 @@
 # routing-aware-dns
-A program to resolve DNS based on BGP route age.
+A program to resolve DNS and compute IP addresses vulnerable to BGP attacks.
