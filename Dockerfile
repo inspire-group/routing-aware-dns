@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     vim \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install matplotlib netaddr numpy
+RUN pip3 install dnspython
 
 WORKDIR routing-aware-dns
 RUN git init -q && git remote add origin https://github.com/inspire-group/routing-aware-dns.git

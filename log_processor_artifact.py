@@ -1,11 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+##################################################
+
+
 # log processing script
 import os
 os.environ['PYTHONASYNCIODEBUG'] = '1'
-import boto3
-import botocore
 from datetime import date, datetime
 import gzip
-import lz4.frame
 import json
 import os
 from pathlib import Path
@@ -14,17 +16,14 @@ from random import Random
 import time
 import logging
 import argparse
-import requests
-import more_itertools as mit
 import routing_aware_dns_resolver_async as dns_resolver
 
 TODAY = date.today().strftime("%Y%m%d")
-DATA_BUCKET_NAME = "letsencryptdata"
-RES_BUCKET_NAME = "letsencryptdnsresults"
-LOG_FILE = f"den-issuance.log-{TODAY}.gz"
-RES_FILE = f"lookup-results-{TODAY}.txt"
-FULL_LKUP_FILE = f"lookups-archive-{TODAY}.gz"
-LOGGER_FILE = f"log-{TODAY}.log"
+DATA_BUCKET_NAME = "usenix23-artifact-data"
+LOG_FILE = f"data/domains_random_samp.txt"
+RES_FILE = f"output/lookup-results-{TODAY}.txt"
+FULL_LKUP_FILE = f"output/lookups-archive-{TODAY}.gz"
+LOGGER_FILE = f"output/log-{TODAY}.log"
 JSON_TAG = "JSON="
 MAX_COUNT = 10000
 RTYPE_LKUPS = {"A": 10, "AAAA": 10, "SOA": 1}
@@ -40,29 +39,6 @@ logging.getLogger('urllib3').setLevel(logging.CRITICAL)
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 
-def read_log_from_bucket(session, log_file):
-    logging.info(f'Reading log from bucket {DATA_BUCKET_NAME}')
-    print(f'Reading log from bucket {DATA_BUCKET_NAME}')
-
-    start = time.time()
-    s3 = session.resource('s3')
-    bucket = s3.Bucket(DATA_BUCKET_NAME)
-
-    try:
-        if not Path(log_file).is_file():
-            bucket.download_file(log_file, log_file)
-    except botocore.exceptions.ClientError as e:
-        if e.response['Error']['Code'] == '404':
-            # TODO: implement some notification mechanism to put here
-            logging.error(f'The object {log_file} does not exist in bucket {DATA_BUCKET_NAME}')
-        else:
-            logging.error(f'Download of {log_file} failed')
-            raise e
-
-    end = time.time()
-    logging.info(f'Downloaded log from S3 in {(end - start):.4f} seconds.')
-
-
 def gz_compress(f_nm, compr_f_nm):
     f_in = open(f_nm, 'rb')
     f_out = gzip.open(compr_f_nm, 'wb')
@@ -71,69 +47,19 @@ def gz_compress(f_nm, compr_f_nm):
     f_in.close()    
 
 
-def write_logs_to_bucket(session, log_file, part):
-
-    start = time.time()
-    print(f'writing logs to bucket')
-    s3 = session.resource('s3')
-    result_bucket = s3.Bucket(RES_BUCKET_NAME)
-    region = session.region_name
-    resp_json = requests.get("http://169.254.169.254/latest/dynamic/instance-identity/document").json()
-    region = resp_json.get('region')
-    le_log_date = log_file[log_file.index("-") + 1:]
-    key_prfx = le_log_date + "/" + region + "/"
-
-    gz_compress(RES_FILE, "lookups_summary.gz")
-    result_bucket.upload_file("lookups_summary.gz", key_prfx + f"lookups_summary_part{part}.gz",
-                              ExtraArgs={'ACL': 'bucket-owner-full-control'})
-
-    result_bucket.upload_file(FULL_LKUP_FILE, key_prfx + f"full_lookups_archive_part{part}.gz",
-                              ExtraArgs={'ACL': 'bucket-owner-full-control'})
-
-    end = time.time()
-    logging.info(f'Copied lookup result files to S3 bucket {RES_BUCKET_NAME} in {(end - start):.4f} seconds.')
-
-    compr_log = "logfile_" + TODAY + "_part" + str(part) + ".log"
-    gz_compress(LOGGER_FILE, compr_log)
-    result_bucket.upload_file(compr_log, key_prfx + compr_log, 
-                              ExtraArgs={'ACL': 'bucket-owner-full-control'})
-    return 0
-
-
-'''Returns a list of (cert ID, [domains], le_ts) tuples of length cert_count.
-'''
-def parse(log_file, cert_count, rand_seed, partition):
+def parse(log_file):
 
     out_q = []
     certs_seen = set()
     start = time.time()
 
-    part, num_part = partition
-
-    num_lines = sum(1 for line in lz4.frame.open(log_file))
-    # use ordinal date as seed to coordinate samples across servers
-    rand_gen = Random(Random(rand_seed).random())
-    rand_line_sample = rand_gen.sample(range(num_lines), cert_count)
-    rand_sample_seg = list(mit.divide(num_part, rand_line_sample)[part])
-
-    with lz4.frame.open(log_file) as f:
-        line_ctr = 0
+    with open(log_file) as f:
         for line in f:
-            if line_ctr in rand_sample_seg:
-                l = line.decode()
-                le_ts = l[:l.index(" ")]
-                cert_log = json.loads(l[l.index(JSON_TAG)+len(JSON_TAG):])
-                urls = list(cert_log['Authorizations'].keys())
-                id_code = cert_log['ID']
-                if id_code not in certs_seen:  # sometimes duplicate lines in logs
-                    certs_seen.add(id_code)
-                    out_q.append((id_code, urls, le_ts))
-            line_ctr += 1
+            out_q.append(line)
 
     stop = time.time()
-    logging.info(f'Parsed {len(certs_seen)} unique certs from log in {(stop - start):.4f} seconds.')
+    logging.info(f'Parsed {len(out_q)} unique certs from log in {(stop - start):.4f} seconds.')
     return out_q
-
 
 # multithreading steps:
 # 1. read all certs to a dict
@@ -145,17 +71,10 @@ def parse(log_file, cert_count, rand_seed, partition):
 
 def process_daily_log(args):
 
-    log_file = args.log_file
-    num_certs = args.num
-    seed = args.seed
-    part = args.partition
-    num_part = args.num_partitions
+    log_file = args.domains
+    logging.info(f'Performing lookups for domains file {log_file}')
 
-    logging.info(f'Performing {num_certs} lookups for log file {log_file} using seed {seed} for partition {part} of {num_part}')
-    session = boto3.Session()
-
-    read_log_from_bucket(session, log_file)
-    certs = parse(log_file, num_certs, seed, (part, num_part))
+    certs = parse(log_file)
     lookup_res = resolve_dns(certs)
 
     if not args.no_upload:
@@ -226,12 +145,16 @@ def get_lookups(id_, urls, soa_enabled=False):
     return (lookup_result, successful, failed)
 
 
-def worker(cert):
+def worker(line):
     # in_q: list of certificates that need to be looked up
     # out_q: threadsafe queue to contain lookup results
+    splitLine = line.strip().split(",")
+    if len(splitLine) < 2:
+        return ((),[],[])
+    le_ts = splitLine[0]
+    url = splitLine[1]
     start = time.time()
-    cert_id, cert_urls, le_ts = cert
-    lookup, successful, failed = get_lookups(cert_id, cert_urls)
+    lookup, successful, failed = get_lookups(1, [url])
     end = time.time()
     print(f'Time to perform {successful + failed} lookups: {(end-start):.4f} sec.')
     return ((lookup, le_ts), successful, failed)
@@ -316,19 +239,9 @@ if __name__ == '__main__':
 
     start = time.time()
 
-    parser = argparse.ArgumentParser(description="Daily Let's Encrypt lookup process")
-    parser.add_argument("log_file", metavar="file_name", type=str,
-                        help="Name of the log file to perform lookups on.")
-    parser.add_argument("-n", "--num", type=int, default=MAX_COUNT, 
-                        help="Number of certs to look up.")
-    parser.add_argument("-np", "--num-partitions", type=int, default=2,
-                        help="Number of instances lookups are divided across.")
-    parser.add_argument("-p", "--partition", type=int, default=0,
-                        help="Partition number for this process.")
-    parser.add_argument("-s", "--seed", type=int, default=date.today().toordinal(),
-                        help="Random seed for sampling certs.")
-    parser.add_argument("--no-upload", action='store_false',
-                        help="Upload lookup results to AWS S3 bucket.")
+    parser = argparse.ArgumentParser(description="Let's Encrypt lookup process")
+    parser.add_argument("-d", "--domains", default="data/domains_random_samp.txt", metavar="file_name", type=str,
+                        help="Name of the domains_random_samp file to perform lookups on.")
     args = parser.parse_args()
 
     result = process_daily_log(args)
