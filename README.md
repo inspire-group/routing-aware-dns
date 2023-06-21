@@ -50,4 +50,4 @@ The output of this script (written to stdout) is in csv format and is used by th
 
 # Collected DNS dataset for Let's Encrypt Subscriber Domains
 
-The results of the DNS lookups (performed with this tool) on Let's Encrypt subscriber domains in csv format for all the domains we sampled in our paper can be found [here](https://secure-certificates.princeton.edu/dns_lookups_daily.tar.gz). This data is in a wide-format csv where the results from each vantage point are concatinated together on each line.
+The results of the DNS lookups (performed with this tool) on Let's Encrypt subscriber domains in csv format for all the domains we sampled in our paper can be found [here](https://secure-certificates.princeton.edu/dns_lookups_daily.tar.gz). This data is in a wide-format csv where the results from each vantage point are concatenated together on each line.
