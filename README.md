@@ -33,7 +33,21 @@ Kill the container:
 Remove the stopped container:
 ```docker rm dns-resolver```
 
+### Commands to reproduce dns lookups in the container
+
+To start dns lookups on `data/domains_random_sample_small.txt` (about a 1.5h runtime) run:
+
+```./log_processor_artifact.py```
+
+This script also takes a --domains parameter which can be used to specify a path to the domains file (e.g., `data/domains_random_sample.txt`)
+
+Output is generated in `output/`. `output/lookup-results*` contains the condensed JSON format for lookup results while `output/lookups-archive*` contains pick full result files.
+
+Lookup results files can be processed with `./lookups_summary_to_csv.py -s <lookup-results file> -v <vantage point name> > output/lookups.csv`. The vantage point name is a random string that identifies which vantage point that lookup was performed from (for evaluation it can simply be an arbitrary value). The lookup-results file is the file produced from `log_processor_artifact.py`
+
+The output of this script (written to stdout) is in csv format and is used by the resilience processing code.
+
 
 # Collected DNS dataset for Let's Encrypt Subscriber Domains
 
-The results of the DNS lookups (performed with this tool) on Let's Encrypt subscriber domains for all the domains we sampled in our paper can be found [here](https://secure-certificates.princeton.edu/dns_lookups_daily.tar.gz).
+The results of the DNS lookups (performed with this tool) on Let's Encrypt subscriber domains in csv format for all the domains we sampled in our paper can be found [here](https://secure-certificates.princeton.edu/dns_lookups_daily.tar.gz). This data is in a wide-format csv where the results from each vantage point are concatinated together on each line.
