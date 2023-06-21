@@ -16,7 +16,7 @@ RUN pip3 install matplotlib netaddr numpy
 
 WORKDIR routing-aware-dns
 RUN git init -q && git remote add origin https://github.com/inspire-group/routing-aware-dns.git
-RUN git fetch -q --depth 1 origin HEAD && git checkout -q usenix-23-artifact
+RUN git fetch -q origin && git checkout -q usenix-23-artifact
 RUN dos2unix /sbas-simulation/code/simulate.py
 ENTRYPOINT ["/sbas-simulation/code/simulate.py"]
 CMD ["--help"]
