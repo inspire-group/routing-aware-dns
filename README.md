@@ -16,7 +16,22 @@ All dependencies can be installed via docker by building an image from the docke
 
 ```docker build --tag full-graph-dns-resolver .```
 
+After making the docker image, run it in the background with:
 
+```docker run --name dns-resolver -d full-graph-dns-resolver```
+
+Enter the container to run commands:
+```docker exec -it dns-resolver bash```
+
+(this bash prompt can be exited and the container will still run for future use)
+
+#### Cleanup commands after running
+
+Kill the container:
+```docker kill dns-resolver```
+
+Remove the stopped container:
+```docker rm dns-resolver```
 
 
 # Collected DNS dataset for Let's Encrypt Subscriber Domains
