@@ -88,14 +88,6 @@ DNSResChain = namedtuple("DNSResChain", ["ns_chain", "full_ns_chain",
                                          "answer_rrset"])
 
 
-def has_answer(res_chain, rtype):
-    if res_chain is not None and len(res_chain) > 0:
-        valid_ans = [_.answer_rrset for _ in res_chain if (_.answer_rrset.rdtype == rtype)]
-        return len(valid_ans) > 0
-    else:
-        return False
-
-
 def get_hostname_addr_from_res_chain(res_chain):
 
     answer_rrset = res_chain[-1].answer_rrset
@@ -107,7 +99,10 @@ def get_hostname_addr_from_res_chain(res_chain):
 
 
 def get_all_hostname_addr(name):
-    return get_all_hostname_addr_from_res_chain(lookup_a_rec(name))
+    ts, a_lookup = asyncio.run(lookup_a_rec(name))
+    unbound_res, fullgraph_res = a_lookup
+    fullgraph, was_glueless = fullgraph_res
+    return get_all_hostname_addr_from_res_chain(fullgraph)
   
 
 def get_all_hostname_addr_from_res_chain(res_chain):
@@ -116,8 +111,6 @@ def get_all_hostname_addr_from_res_chain(res_chain):
     if res_chain is not None and len(res_chain) > 0:
         try:
             answer_rrset = res_chain[-1].answer_rrset
-            valid_answers = [_.answer_rrset for _ in res_chain if (_.answer_rrset.rdtype == dns.rdatatype.A or _.answer_rrset.rdtype == dns.rdatatype.AAAA)]
-            answer_rrset = valid_answers[-1]
             for ans in answer_rrset:
                 res.append(ans.address)
             ttl = answer_rrset.ttl
@@ -287,7 +280,7 @@ async def lookup_name_rec_helper(name, record, cache,
     ns_query_timer_accum = 0
     max_tree_depth = 10
     while len(stack) > 0 and max_tree_depth > 0:
-        # first step: choose a nameserver to query for the first level record
+        # choose a nameserver to query for the first level record
         # store on stack: (dnslookup result obj, stack of nameservers to search)
         lookup_res, ns_to_search = stack.pop()
         
@@ -331,8 +324,8 @@ async def lookup_name_rec_helper(name, record, cache,
 
                         for ans in answer_rrset:
                             root_lookup = await lookup_name_rec_helper(ans.target.to_text(), record,
-                                cache,
-                                cname_chain_count=cname_chain_count - 1, res_all_glueless=res_all_glueless)
+                                cache, cname_chain_count=cname_chain_count - 1, 
+                                res_all_glueless=res_all_glueless)
                             cname_lkup.extend(root_lookup)
                         cache[(name, record)] = cname_lkup
                         lookup_results.extend(cname_lkup)
@@ -374,9 +367,9 @@ async def lookup_name_rec_helper(name, record, cache,
                                 # Else it might already be listed with an IPv6 record, iterate through the list, find the index and update the IPv4 record.
                                 (ipv4, ipv6) = glued_ns_ip_dict[g.name.to_text()]
                                 if g.rdtype == dns.rdatatype.A:
-                                    ipv4.append(ns_addr.address)
+                                    addr_v4.append(ns_addr.address)
                                 elif g.rdtype == dns.rdatatype.AAAA:
-                                    ipv6.append(ns_addr.address)
+                                    addr_v6.append(ns_addr.address)
                                 glued_ns_ip_dict[g.name.to_text()] = (addr_v4, addr_v6)
 
                 glueless_ns_list = [_ for _ in all_ns_list if _ not in glued_ns_ip_dict]
@@ -418,14 +411,12 @@ async def full_lookup_with_timelimit(name, record, cache, timeout):
     tasks = []
     try:
         try:
-            print(f'starting glued lookup for {name} {record}')
             is_full_graph = True
             lookup = await lookup_name_rec_helper(name, record, cache, res_all_glueless=True)
             is_full_graph = True
             return (lookup, is_full_graph)
 
         except dns.exception.Timeout:
-            print(f'retrying with glueless for {name} {record}')
             is_full_graph = False
             glueless_lookup = await lookup_name_rec_helper(name, record, cache_dupl, res_all_glueless=False)
             return (glueless_lookup, is_full_graph)
@@ -482,11 +473,14 @@ def get_full_dns_target_ip_list(lookup_result):
 async def lookup_name(name, record_type, rec_limit=10, res_all_glueless=True):
     return await lookup_name_rec_cached(name, record_type, rec_limit, {}, res_all_glueless)
 
-
+# query name for multiple record times, to specified iteration limit
+# name: str, of the domain name to be resolved
+# rec_type_dict: dict, key = DNS rtype, value = number of query iterations
+# returns dict: key = DNS rtype, value = list of returned DNS lookups
 async def collector(name, rec_type_dict, res_all_glueless=True):
 
     jobs = []
-    rtypes = list(rec_type_dict.keys())
+    rtypes = list(rec_type_dict)
     for rtype in rtypes:
         reps = rec_type_dict[rtype]
         tasks = [lookup_name(name, dns.rdatatype.from_text(rtype), res_all_glueless=res_all_glueless) for _ in range(reps)]
@@ -531,10 +525,6 @@ def format_lookup_json(lookup, name, rtype):
         lookup_json["error_msg"] = type(iter_lookup).__name__ + exc_msg
     else:
         full_lookup, full_graph = iter_lookup
-        if not has_answer(full_lookup, rtype):
-            print(f'Missing answer for {name} type {rtype}')
-            lookup_json["error_msg"] = "ValueError: The given result chain does not have a valid address. Maybe a lookup for the wrong record type " + str(full_lookup)
-            return lookup_json
         lookup_json["full_lookup"] = full_lookup
         lookup_json["full_graph"] = full_graph
         if (rtype == dns.rdatatype.A) or (rtype == dns.rdatatype.AAAA):
@@ -553,6 +543,7 @@ def format_lookup_json(lookup, name, rtype):
     return lookup_json
 
 
+# wrapper for async collector() function
 def lookup_full_name_batched(name, record_types_with_rtries):
     start = time.perf_counter()
 
