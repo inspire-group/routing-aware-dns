@@ -1,0 +1,7 @@
+[submodule "princeton-letsencrypt"]
+	path = princeton-letsencrypt
+	url = git@github.com:PrincetonUniversity/princeton-letsencrypt.git
+	branch = usenix23-artifact
+[submodule "topology-simulator"]
+	path = topology-simulator
+	url = git@github.com:birgelee/topology-simulator.git
