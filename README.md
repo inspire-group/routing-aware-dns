@@ -35,11 +35,11 @@ Remove the stopped container:
 
 ### Commands to reproduce dns lookups in the container
 
-To start dns lookups on `data/domains_random_sample_small.txt` (about a 1.5h runtime) run:
+To start dns lookups on `data/domains_random_samp_small.txt` (about a 1.5h runtime) run:
 
 ```./log_processor_artifact.py```
 
-This script also takes a --domains parameter which can be used to specify a path to the domains file (e.g., `data/domains_random_sample.txt`)
+This script also takes a --domains parameter which can be used to specify a path to the domains file (e.g., `data/domains_random_samp_small.txt`)
 
 Output is generated in `output/`. `output/lookup-results*` contains the condensed JSON format for lookup results while `output/lookups-archive*` contains pick full result files.
 
