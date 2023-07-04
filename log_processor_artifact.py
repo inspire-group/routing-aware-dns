@@ -240,7 +240,7 @@ if __name__ == '__main__':
     start = time.time()
 
     parser = argparse.ArgumentParser(description="Let's Encrypt lookup process")
-    parser.add_argument("-d", "--domains", default="data/domains_random_samp.txt", metavar="file_name", type=str,
+    parser.add_argument("-d", "--domains", default="data/domains_random_samp_small.txt", metavar="file_name", type=str,
                         help="Name of the domains_random_samp file to perform lookups on.")
     args = parser.parse_args()
 
