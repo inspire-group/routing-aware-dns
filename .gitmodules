@@ -2,3 +2,6 @@
 	path = topology-simulator
 	url = https://github.com/birgelee/topology-simulator.git
 	branch = usenix23-artifact
+[submodule "pki-resilience-processing"]
+	path = pki-resilience-processing
+	url = https://github.com/inspire-group/pki-resilience-processing.git
