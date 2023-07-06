@@ -1,3 +1,6 @@
 [submodule "pki-resilience-processing"]
 	path = pki-resilience-processing
 	url = https://github.com/inspire-group/pki-resilience-processing.git
+[submodule "pki-topology-simulator"]
+	path = pki-topology-simulator
+	url = https://github.com/inspire-group/pki-topology-simulator.git
