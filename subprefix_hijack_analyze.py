@@ -8,7 +8,7 @@ import urllib.request
 from bs4 import BeautifulSoup
 from os import listdir, makedirs
 from os.path import isfile, isdir, join, exists
-from collections import Counter
+from collections import Counter, defaultdict
 
 HOME_DIR = "/home/gcimaszewski"
 RES_DIR = join(HOME_DIR, "dns_research")
@@ -52,6 +52,79 @@ loc_vp_mapping = {'ap-northeast-1': ['gcp_asia_northeast1', 'ec2_ap_northeast_1'
                   'eu-central-1': ['ec2_eu_central_1', 'ec2_eu_north_1', 'azure_west_europe', 'azure_germany_west_central']}
 
 
+
+
+
+def open_gz_pkl(f_path):
+
+    with gzip.open(f_path) as f:
+        return pickle.load(f)
+
+
+def get_hidden_hijack_safe_domains(vp_flag_map):
+
+    primary_a = set(vp_flag_map['le_via_west']['a'])
+    primary_ns = set(vp_flag_map['le_via_west']['ns'])
+    east_a = set(vp_flag_map['ec2_us_east_2']['a'])
+    east_ns = set(vp_flag_map['ec2_us_east_2']['ns'])
+    west_a = set(vp_flag_map['ec2_us_west_2']['a'])
+    west_ns = set(vp_flag_map['ec2_us_west_2']['ns'])
+    eu_a = set(vp_flag_map['ec2_eu_central_1']['a'])
+    eu_ns = set(vp_flag_map['ec2_eu_central_1']['ns'])
+
+    vp_safe_a = Counter(list(east_a) + list(west_a) + list(eu_a))
+    vp_safe_ns = Counter(list(east_ns) + list(west_ns) + list(eu_ns))
+
+    quor_safe_a = [d for d, ct in vp_safe_a.items() if ct >= 2]
+    quor_safe_ns = [d for d, ct in vp_safe_ns.items() if ct >= 2]
+
+    all_safe_a = primary_a.union(quor_safe_a)
+    all_safe_ns = primary_ns.union(quor_safe_ns)
+    return all_safe_a, all_safe_ns, primary_a, primary_ns, set(quor_safe_a), set(quor_safe_ns)
+
+
+# total number of domains: 1354318
+def analyze_domain_paths(d_='subprefix_data/domain_can_hh_path_final'):
+
+    vp_flag_map = {vp: {"a": [], "ns": [], "missing_a": [], "missing_ns": []} for vp in vp_prov_mapping}
+
+    print(f'Reading files from {d_}...')
+    data_files = listdir(d_)
+    total_domains = 0
+    for file in data_files:
+        domain_hh_map = open_gz_pkl(join(d_, file))
+        for dmn, hijack_map in domain_hh_map.items():
+            total_domains += 1
+            for vp, flags in hijack_map.items():
+                a_flags, ns_flags = flags
+                if all(a_flags):
+                    vp_flag_map[vp]['a'].append(dmn)
+                elif len(a_flags) == 0:
+                    vp_flag_map[vp]['missing_a'].append(dmn)
+                if all(ns_flags):
+                    vp_flag_map[vp]['ns'].append(dmn)
+                elif len(ns_flags) == 0:
+                    vp_flag_map[vp]['missing_ns'].append(dmn)
+    return vp_flag_map, total_domains
+
+
+def get_domain_path_hijack_flag_map(domain_paths_map, as_rov_map):
+
+    domain_can_hijack_path_map = {}
+    for domain, vp_paths in domain_paths_map.items():
+        d_submap = {}
+        for vp, (a_paths, ns_paths) in vp_paths.items():
+            a_can_hijack = []
+            ns_can_hijack = []
+            for a_path in a_paths:
+                a_can_hijack.append(calc_path_hh(a_path, as_rov_map))
+            for ns_path in ns_paths:
+                ns_can_hijack.append(calc_path_hh(ns_path, as_rov_map))
+            d_submap[vp] = (a_can_hijack, ns_can_hijack)
+        domain_can_hijack_path_map[domain] = d_submap
+    return domain_can_hijack_path_map
+
+
 def get_domain_ocid_map(lookup_map, ip_prfx_map):
     domain_ocid_map = {}
     for dmn, rmap in lookup_map.items():
@@ -93,6 +166,7 @@ def get_rov_secured_paths(domain_ocid_map, ocid_path_map):
         domain_rov_path_map[dmn] = d_submap
     return domain_rov_path_map
 
+
 # RoVISTA dataset summary:
 # 28858 ASes in total
 # 23658 (82%) of ASes perform no ROV
@@ -119,13 +193,16 @@ def get_rovista_data():
 
 # map: AS a: bool (True if AS a performs ROV or every neighbor of a performs ROV)
 # i.e., whether or not AS a will propagate hidden subprefix hijack
-def calc_rov_propagation(rov_as_map, topo):
+def calc_rov_propagation(rov_as_map, topo, thresh=0.9):
 
     as_hh_map = {}
     # label all ASes surely performing ROV
+    setitems = 0
     for asn, rov_filt_ratio in rov_as_map.items():
-        if rov_filt_ratio >= 0.99:
+        if rov_filt_ratio >= thresh:
             as_hh_map[asn] = True
+            setitems += 1
+    print(f'Set items: {setitems}')
     label_as_stack = [asn for asn, (custs, peers, provs) in topo.items() if 
                      all(
                         [all([a in as_hh_map and as_hh_map[a] for a in custs]),
@@ -175,12 +252,13 @@ def parse_ocid_paths(out_f, ocid_path_map={}):
     # return ocid_path_map
 
 
-def calc_path_hh(path_str, rov_map):
+# redo: don't require that origin do ROV
+def calc_path_hh(path_str, as_rov_map):
 
     flags = []
-    for hop in path_str:
-        if hop in rov_map:
-            flags.append(rov_map[hop])
+    for hop in path_str[:-1]:
+        if hop in as_rov_map:
+            flags.append(as_rov_map[hop])
         else:
             flags.append(False)
     return all(flags)
@@ -451,6 +529,7 @@ def can_subprfx_hijack_dmap(dmap, prfx_roa_map, routinator_map, ocid_map, maxct=
     return safe_domains, bad_domains, domains_no_roa, domains_bad_maxlen
 
 
+# saved to domain_subprefix_hijack_check_map.pkl.gz
 def can_subprfx_hijack(dmap, ips_to_note):
     res_map = {}
     # safe_domains = {r: set() for r in all_regions}
@@ -483,7 +562,176 @@ def can_subprfx_hijack(dmap, ips_to_note):
                        (_ in ips_to_note['have_valid_roa'] and _ not in ips_to_note['roa_wrong_maxlen']))
                        for _ in dns_ips])
 
-        res_map[domain] = {'webserver': (len(a_ips), a_all24, a_allroa, a_allroa_goodlen, a_noroa, a_badmaxlen, a_safe) , 
-                           'dns': (len(dns_ips), ns_all24, ns_allroa, ns_allroa_goodlen, ns_noroa, ns_badmaxlen, ns_safe)}
+        a_either_buff = []
+        a_either_maxlen_buff = []
+        a_either_maxlen_rov_buff = []
+        ns_either_buff = []
+        ns_either_maxlen_buff = []
+        ns_either_maxlen_rov_buff = []
+        for ip_ in a_ips:
+            if ip_ in ips_to_note['on_24orlonger_prfx'] or ip_ in ips_to_note['have_valid_roa']:
+               a_either_buff.append(True)
+            else:
+                a_either_buff.append(False)
+            if ip_ in ips_to_note['on_24orlonger_prfx'] or\
+               (ip_ in ips_to_note['have_valid_roa'] and ip_ not in ips_to_note['roa_wrong_maxlen']):
+               a_either_maxlen_buff.append(True)
+            else:
+                a_either_maxlen_buff.append(False)
+
+        for ip_ in dns_ips:
+            if ip_ in ips_to_note['on_24orlonger_prfx'] or ip_ in ips_to_note['have_valid_roa']:
+               ns_either_buff.append(True)
+            else:
+                ns_either_buff.append(False)
+            if ip_ in ips_to_note['on_24orlonger_prfx'] or\
+               (ip_ in ips_to_note['have_valid_roa'] and ip_ not in ips_to_note['roa_wrong_maxlen']):
+               ns_either_maxlen_buff.append(True)
+            else:
+                ns_either_maxlen_buff.append(False)
+
+        a_either = all(a_either_buff)
+        ns_either = all(ns_either_buff)
+        a_either_maxlen = all(a_either_maxlen_buff)
+        ns_either_maxlen = all(ns_either_maxlen_buff)
+
+        a_ns_either = a_either and ns_either
+        a_ns_either_maxlen = a_either_maxlen and ns_either_maxlen
+
+        res_map[domain] = {'webserver': (len(a_ips), a_all24, a_allroa, a_allroa_goodlen, a_noroa, a_badmaxlen, a_safe), 
+                           'dns': (len(dns_ips), ns_all24, ns_allroa, ns_allroa_goodlen, ns_noroa, ns_badmaxlen, ns_safe),
+                           'either': (a_either, ns_either, a_either_maxlen, ns_either_maxlen, a_ns_either, a_ns_either_maxlen)}
 
     return res_map
+
+
+# for file in path_files:
+#     with gzip.open(join(d_, path_dir, file)) as f:
+#         path_map = pickle.load(f)
+#     res = sha.get_domain_path_hijack_flag_map(path_map, as_does_rov_map)
+#     dt = file[:file.index('.')]
+#     with gzip.open(join(d_, hh_d, f"{dt}.pkl.gz"), 'wb') as f_write:
+#         pickle.dump(res, f_write)
+#     print(f'Done with {dt}')
+#     del res
+#     del path_map
+
+# for file in path_files[10:]:
+#     with gzip.open(join(path_d, file)) as f:
+#         path_map = pickle.load(f)
+#     res = sha.get_domain_path_hijack_flag_map(path_map, does_rov_map)
+#     dt = file[:file.index('.')]
+#     with gzip.open(join(hh_flag_d, f"{dt}.pkl.gz"), 'wb') as f_write:
+#         pickle.dump(res, f_write)
+#     print(f'Done with {dt}')
+#     del res
+#     del path_map
+
+
+def load_caida_as_rel(topo_file):
+
+    topo_dict = defaultdict(lambda: [[], [], []])
+
+    # every [provider-customer edges] is a list of ASes that are customers.
+    # This should really be thought of as:
+    # asdict[asn] = [[customer ASNs],[peers],[providers]]
+    # asdict[asn] = [[provider-customer edges],[peer-to-peer edges],[customer-provider edges]]
+    for line in open(topo_file):
+        if not line.strip().startswith("#"):
+            # file format:
+            # <provider-as>|<customer-as>|-1|<source> OR <peer-as>|<peer-as>|0|<source>
+            # -1: provider-customer; 0: peer-to-peer
+            arr = line.strip().split('|')
+
+            asn1, asn2, rel = arr[0], arr[1], arr[2]
+
+            if rel == -1: # provider-customer
+                topo_dict[asn1][0].append(asn2)
+                topo_dict[asn2][2].append(asn1)
+            else:   # peer-to-peer
+                topo_dict[asn1][1].append(asn2)
+                topo_dict[asn2][1].append(asn1)
+
+    return dict(topo_dict)
+
+
+# domain_paths_analyzed, total_domains = sha.analyze_domain_paths()
+# # domain_hijack_check = sha.open_gz_pkl(join(d_, 'domain_subprefix_hijack_check_map.pkl.gz'))
+
+safe = {'24': {'a': [], 'ns': [], 'both': []}, 
+        'roa':  {'a': [], 'ns': [], 'both': []}}
+
+
+# for dt, dmap in domain_subprfx_map.items():
+#     for dmn, flag_map in dmap.items():
+#         if flag_map['webserver'][1]:
+#             safe['24']['a'].append(dmn)
+#         if flag_map['dns'][1]:
+#             safe['24']['ns'].append(dmn)
+#         if flag_map['dns'][1] and flag_map['webserver'][1]:
+#             safe['24']['both'].append(dmn)
+#         if flag_map['webserver'][3]:
+#             safe['roa']['a'].append(dmn)
+#         if flag_map['dns'][3]:
+#             safe['roa']['ns'].append(dmn)
+#         if flag_map['webserver'][3] and flag_map['dns'][3]:
+#             safe['roa']['both'].append(dmn)
+
+# safe_24 = {'a': [], 'ns': [], 'both': []}; safe_roa = {'a': [], 'ns': [], 'both': []}
+# for dt, dmap in domain_hijack_check.items():
+#     for dmn, flag_map in dmap.items():
+#         if flag_map['webserver'][1]:
+#             safe_24['a'].append(dmn)
+#         if flag_map['dns'][1]:
+#             safe_24['ns'].append(dmn)
+#         if flag_map['dns'][1] and flag_map['webserver'][1]:
+#             safe_24['both'].append(dmn)
+#         if flag_map['webserver'][3]:
+#             safe_roa['a'].append(dmn)
+#         if flag_map['dns'][3]:
+#             safe_roa['ns'].append(dmn)
+#         if flag_map['webserver'][3] and flag_map['dns'][3]:
+#             safe_roa['both'].append(dmn)
+
+# quor_pol_applied_rov_paths = sha.get_hidden_hijack_safe_domains(domain_paths_analyzed)
+
+
+# hh_safe_all_a, hh_safe_all_ns, hh_safe_pri_a, hh_safe_pri_ns, hh_safe_vp_a, hh_safe_vp_ns = quor_pol_applied_rov_paths
+
+# roa_safe_a = [_ for _ in safe_roa['a'] if _ in hh_safe_all_a]
+# roa_safe_ns = [_ for _ in safe_roa['ns'] if _ in hh_safe_all_ns]
+# roa_safe_all = set(roa_safe_a).intersection(set(roa_safe_ns))
+# roa_safe_all = [_ for _ in safe_roa['both'] if (_ in hh_safe_all_a) and (_ in hh_safe_all_ns)]
+# tot = 1354318
+# print(len(roa_safe_a)/tot)
+# print(len(roa_safe_ns)/tot)
+# print(len(roa_safe_all)/tot)
+
+
+# c_24_arec = Counter(safe_24['a'])
+# c_roa_arec = Counter(roa_safe_a)
+# lt24_or_roa_safe_a = set(safe_24['a']).union(set(roa_safe_a))
+# lt24_or_roa_safe_ns = set(safe_24['ns']).union(set(roa_safe_ns))
+# lt24_or_roa_safe_all = set(safe_24['all']).union(set(roa_safe_all))
+
+
+def get_union_with_count(l1, l2):
+
+    counter1 = Counter(l1)
+    counter2 = Counter(l2)
+    union = set(l1).union(set(l2))
+    count = 0
+    for d in union:
+        count += max(counter1[d], counter2[d])
+    return union, count
+
+
+def get_intersection_with_count(l1, l2):
+
+    counter1 = Counter(l1)
+    counter2 = Counter(l2)
+    inter = set(l1).intersection(set(l2))
+    count = 0
+    for d in inter:
+        count += min(counter1[d], counter2[d])
+    return inter, count
